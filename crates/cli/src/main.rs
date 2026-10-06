@@ -381,7 +381,7 @@ fn doctor(ctx: &Ctx) -> Result<()> {
         for w in &ov.warnings {
             // Several organizations is the normal case, so it reads as a tip, not a problem.
             let mark = if matches!(w, Warning::SpansOrgs { .. }) { "·" } else { "!" };
-            println!("{mark} {}", warning_text(w));
+            println!("{mark} {}", warning_text(w, &ov.labels));
         }
     }
     println!("\nNot synced by design: sidebar groups and order (a server setting of each account), pins, Cowork tasks, claude.ai chats, projects and memory, cloud sessions, connectors and Remote Control links.");
@@ -404,7 +404,8 @@ fn service_line(ov: &Overview) -> String {
     }
 }
 
-fn warning_text(w: &Warning) -> String {
+fn warning_text(w: &Warning, labels: &BTreeMap<String, String>) -> String {
+    let label = |acct: &str| labels.get(acct).cloned().unwrap_or_else(|| format!("account {}", short(acct)));
     match w {
         Warning::SymlinkedFolders { surface, count } => format!(
             "{count} {surface} session folder(s) are symlinks. Claude silently stops saving sessions there. Quit Claude, then run: cc-same fix-symlinks"
@@ -429,6 +430,12 @@ fn warning_text(w: &Warning) -> String {
             format!("{missing} of {total} sessions no longer have a transcript on disk; they open empty or not at all")
         }
         Warning::DesktopDataMissing { path } => format!("Claude Desktop's data folder was not found at {}", path.display()),
+        Warning::CliOnOtherAccount { cli, desktop } => format!(
+            "Claude Code in the terminal has a claude.ai login for {}, Claude Desktop is signed in to {}: when the terminal uses that login (not an API key or a cloud provider), what you run there counts against {}'s plan. To change it, run /login in claude",
+            label(cli),
+            label(desktop),
+            label(cli),
+        ),
     }
 }
 

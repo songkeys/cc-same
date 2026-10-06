@@ -53,6 +53,10 @@ pub enum Warning {
     MissingTranscripts { missing: usize, total: usize },
     /// Claude Desktop's data folder was not found.
     DesktopDataMissing { path: PathBuf },
+    /// Claude Code in the terminal is signed in to another account than Claude Desktop, so what
+    /// runs there counts against that account's plan when it uses that login (not an API key or a
+    /// cloud provider).
+    CliOnOtherAccount { cli: String, desktop: String },
 }
 
 #[derive(Clone, Debug, Default)]
@@ -218,6 +222,12 @@ pub fn overview(ctx: &Ctx) -> Overview {
     if let (true, Some(days), Some(limited_by)) = (retention.is_short(), retention.desktop_days, retention.limited_by) {
         warnings.push(Warning::ShortRetention { days, limited_by, path: ctx.paths.claude_settings.clone() });
     }
+    let logins = crate::logins::list(ctx);
+    if let (Some((cli, _)), Some(desktop)) = (scan::cli_account(ctx), &logins.signed_in) {
+        if cli != *desktop {
+            warnings.push(Warning::CliOnOtherAccount { cli, desktop: desktop.clone() });
+        }
+    }
     let (plan, _, _) = build_plan(ctx, Some(app.clone()), Some(&state));
     Overview {
         desktop_version: desktop::desktop_version(),
@@ -226,7 +236,7 @@ pub fn overview(ctx: &Ctx) -> Overview {
         plan: summarize(&plan),
         warnings,
         retention,
-        logins: crate::logins::list(ctx),
+        logins,
         roster,
         usage,
         service: service::status(ctx),

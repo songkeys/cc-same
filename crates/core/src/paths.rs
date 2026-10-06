@@ -68,7 +68,10 @@ impl Paths {
             projects,
             claude_settings: claude_home.join("settings.json"),
             managed_settings: default_managed_settings(),
-            claude_json: home().join(".claude.json"),
+            // With CLAUDE_CONFIG_DIR set, Claude Code keeps its global config in that folder.
+            claude_json: env_path("CLAUDE_CONFIG_DIR")
+                .map(|dir| dir.join(".claude.json"))
+                .unwrap_or_else(|| home().join(".claude.json")),
         }
     }
 

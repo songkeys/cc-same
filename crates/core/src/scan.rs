@@ -246,19 +246,23 @@ pub fn transcript_index(ctx: &Ctx) -> Option<Arc<HashSet<String>>> {
     result
 }
 
+/// The account Claude Code's command line is signed in to, and its email when known: its
+/// `oauthAccount` in `~/.claude.json`. Only who it is; the sign-in itself is in the keychain.
+pub fn cli_account(ctx: &Ctx) -> Option<(String, Option<String>)> {
+    let Ok(Value::Object(root)) = fsx::read_json(&ctx.paths.claude_json, 64 * 1024 * 1024) else {
+        return None;
+    };
+    let Some(Value::Object(oa)) = root.get("oauthAccount") else { return None };
+    let id = oa.get("accountUuid").and_then(Value::as_str).filter(|id| is_uuid(id))?;
+    let email = oa.get("emailAddress").and_then(Value::as_str).map(str::to_string);
+    Some((id.to_string(), email))
+}
+
 /// Best-effort email per account id, from Claude Code's CLI login and local Cowork records.
 pub fn account_labels(ctx: &Ctx) -> BTreeMap<String, String> {
     let mut labels = BTreeMap::new();
-    if let Ok(Value::Object(root)) = fsx::read_json(&ctx.paths.claude_json, 64 * 1024 * 1024) {
-        if let Some(Value::Object(oa)) = root.get("oauthAccount") {
-            if let (Some(Value::String(id)), Some(Value::String(email))) =
-                (oa.get("accountUuid"), oa.get("emailAddress"))
-            {
-                if is_uuid(id) {
-                    labels.insert(id.clone(), email.clone());
-                }
-            }
-        }
+    if let Some((id, Some(email))) = cli_account(ctx) {
+        labels.insert(id, email);
     }
     for (acct, _, path, is_link) in org_folders(&ctx.paths.cowork_sessions()) {
         if labels.contains_key(&acct) || is_link {

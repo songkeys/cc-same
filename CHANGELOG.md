@@ -3,6 +3,16 @@
 What changed in each version of CC Same. The app shows these notes after it updates, and under
 Settings › Updates.
 
+## Unreleased
+
+### Added
+
+- **The terminal on another account.** Claude Code in the terminal keeps a sign-in of its own,
+  apart from Claude Desktop's. When the two are signed in to different accounts, `cc-same doctor`
+  now says so, since what you run in the terminal counts against the other account's plan (when it
+  uses that login rather than an API key or a cloud provider). With `CLAUDE_CONFIG_DIR` set, CC Same now reads Claude Code's config from
+  that folder, as Claude Code does.
+
 ## 0.1.10 - 2026-10-05
 
 ### Added

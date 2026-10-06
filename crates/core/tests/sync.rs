@@ -729,3 +729,28 @@ fn switching_accounts_while_claude_runs() {
     stop.store(true, Ordering::Relaxed);
     agent.join().unwrap();
 }
+
+// ---------------------------------------------------------------------------- the terminal
+
+/// Claude Code in the terminal keeps its own sign-in. When it is another account than Claude
+/// Desktop's, `doctor` says so; when they agree, or either is unknown, it says nothing.
+#[test]
+fn a_terminal_signed_in_elsewhere_is_pointed_out() {
+    use cc_same_core::report::{self, Warning};
+    let e = Env::new();
+    let cli_on = |acct: &str| {
+        let body = json!({ "oauthAccount": { "accountUuid": acct, "emailAddress": "cli@example.com" } });
+        fs::write(e.root.join("claude.json"), body.to_string()).unwrap();
+    };
+    let mismatch = |e: &Env| {
+        report::overview(&e.ctx()).warnings.into_iter().find(|w| matches!(w, Warning::CliOnOtherAccount { .. }))
+    };
+    e.code(A);
+    assert_eq!(mismatch(&e), None);
+    cli_on(B.0);
+    assert_eq!(mismatch(&e), None, "Desktop's account is unknown");
+    fs::write(e.user_data.join("config.json"), json!({"lastKnownAccountUuid": A.0}).to_string()).unwrap();
+    assert_eq!(mismatch(&e), Some(Warning::CliOnOtherAccount { cli: B.0.into(), desktop: A.0.into() }));
+    cli_on(A.0);
+    assert_eq!(mismatch(&e), None);
+}
