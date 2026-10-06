@@ -131,6 +131,7 @@ pub(crate) fn plan_surface(
     for s in states {
         if let Some(err) = &s.error {
             plan.notes.push(format!("{surface} {}: skipped ({err})", s.part.label()));
+            plan.skipped.push(format!("{surface} {}: {err}", s.part.label()));
         }
     }
     if members.len() < 2 {

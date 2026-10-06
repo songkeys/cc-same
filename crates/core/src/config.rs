@@ -40,6 +40,10 @@ pub struct Config {
     /// Desktop app: download new versions in the background and install them while the window
     /// is closed.
     pub auto_update: bool,
+    /// A shell command to run after Claude switches accounts ([`crate::hooks`]).
+    pub on_switch: Option<String>,
+    /// A shell command to run when the background sync starts failing ([`crate::hooks`]).
+    pub on_sync_error: Option<String>,
 }
 
 impl Default for Config {
@@ -57,6 +61,8 @@ impl Default for Config {
             tray: true,
             check_updates: true,
             auto_update: true,
+            on_switch: None,
+            on_sync_error: None,
         }
     }
 }

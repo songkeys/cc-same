@@ -3,6 +3,20 @@
 What changed in each version of CC Same. The app shows these notes after it updates, and under
 Settings › Updates.
 
+## Unreleased
+
+### Added
+
+- **Hooks.** `cc-same config --on-switch '<command>'` runs a command of yours after every account
+  switch, from the window, the menu bar or the command line, and `--on-sync-error '<command>'`
+  runs one when the background sync starts failing: to post to a chat, say, or to set something
+  up for the account you switched to. What happened is in the command's environment
+  (`CC_SAME_EVENT`, `CC_SAME_MESSAGE`, `CC_SAME_FROM`, `CC_SAME_TO`, …). A hook never holds
+  a switch or a sync up, is stopped with everything it started if it is still running after a minute, and a
+  sync error (a failed change or a folder that can't be read) runs its hook once, not on every
+  pass while it keeps failing. CC Same itself stays offline; a hook is your command and can do
+  whatever you can.
+
 ## 0.1.10 - 2026-10-05
 
 ### Added

@@ -242,6 +242,8 @@ impl Action {
 pub struct Plan {
     pub actions: Vec<Action>,
     pub notes: Vec<String>,
+    /// Index folders left out because they could not be read, with why.
+    pub skipped: Vec<String>,
     /// Changes waiting because Desktop has that index loaded, per partition key.
     pub deferred: BTreeMap<String, usize>,
     /// surface -> collection file -> member key (or `__group__`) -> merged value.

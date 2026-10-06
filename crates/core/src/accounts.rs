@@ -407,6 +407,7 @@ pub fn pick<'a>(
 pub fn switch(ctx: &Ctx, account: &str, watch: &desktop::Watch) -> Result<logins::Switched> {
     let done = logins::switch(ctx, logins::Target::Account(account), watch)?;
     observe(ctx);
+    crate::hooks::run(ctx, &crate::hooks::Event::Switch { from: done.from.clone(), to: done.to.clone() });
     Ok(done)
 }
 
@@ -415,6 +416,7 @@ pub fn switch(ctx: &Ctx, account: &str, watch: &desktop::Watch) -> Result<logins
 pub fn add(ctx: &Ctx, watch: &desktop::Watch) -> Result<logins::Switched> {
     let done = logins::switch(ctx, logins::Target::SignedOut, watch)?;
     observe(ctx);
+    crate::hooks::run(ctx, &crate::hooks::Event::Switch { from: done.from.clone(), to: None });
     Ok(done)
 }
 

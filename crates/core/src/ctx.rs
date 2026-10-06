@@ -46,6 +46,10 @@ impl Logger {
         Logger { sink: Mutex::new(sink) }
     }
 
+    pub fn sink(&self) -> LogSink {
+        self.sink.lock().unwrap().clone()
+    }
+
     pub fn set_sink(&self, sink: LogSink) {
         *self.sink.lock().unwrap() = sink;
     }
