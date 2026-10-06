@@ -69,6 +69,7 @@ impl Env {
         p.projects = vec![self.projects.clone()];
         p.claude_settings = self.root.join("claude-settings.json");
         p.claude_json = self.root.join("claude.json");
+        p.synced_plugins = self.root.join("plugins-synced");
         p
     }
 
@@ -728,4 +729,118 @@ fn switching_accounts_while_claude_runs() {
     assert!(e.state_dir.join("agent.json").exists(), "the agent writes a heartbeat");
     stop.store(true, Ordering::Relaxed);
     agent.join().unwrap();
+}
+
+// ---------------------------------------------------------------------------- what stays home
+
+/// Connectors, org plugins and published artifacts stay with their account; the inventory says
+/// which account has which, and what each one lacks.
+#[test]
+fn the_inventory_tells_what_stays_with_each_account() {
+    use cc_same_core::inventory;
+    let e = Env::new();
+    let linear = json!({"name": "Linear", "url": "https://mcp.linear.app/sse", "uuid": "u1", "tools": []});
+    let slack = json!({"name": "Slack", "url": "https://mcp.slack.com", "uuid": "u2", "tools": []});
+    let (x, y, z) = (uid(), uid(), uid());
+    e.record(
+        A,
+        &x,
+        100_000,
+        json!({
+            "remoteMcpServersConfig": [linear.clone(), slack],
+            "publishedArtifacts": [{"url": "https://claude.ai/artifact/one", "title": "One", "updatedAt": 1_000_000}],
+        }),
+    );
+    // Another session lists the same artifact, edited later.
+    e.record(
+        A,
+        &y,
+        100_000,
+        json!({
+            "publishedArtifacts": [
+                {"url": "https://claude.ai/artifact/one", "title": "One, edited", "updatedAt": 2_000_000},
+                {"url": "https://claude.ai/artifact/two", "title": "Two", "updatedAt": 1_500_000},
+            ],
+        }),
+    );
+    e.record(B, &z, 100_000, json!({"remoteMcpServersConfig": [linear]}));
+    let synced = e.root.join("plugins-synced").join(format!("{}_{}", B.1, B.0));
+    fs::create_dir_all(&synced).unwrap();
+    let manifest = json!({"plugins": [{"name": "legal", "marketplaceName": "knowledge-work-plugins"}]});
+    fs::write(synced.join("manifest.json"), manifest.to_string()).unwrap();
+
+    let held = inventory::read(&e.ctx());
+    let a = held.of(A.0).unwrap();
+    assert_eq!(a.connectors.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["Linear", "Slack"]);
+    let titles: Vec<_> = a.artifacts.iter().map(|x| x.title.as_deref().unwrap()).collect();
+    assert_eq!(titles, ["One, edited", "Two"]);
+    assert!(a.plugins.is_empty());
+    let b = held.of(B.0).unwrap();
+    assert_eq!(b.plugins.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["legal"]);
+    assert!(b.artifacts.is_empty());
+
+    let missing = held.missing(A.0);
+    assert!(missing.connectors.is_empty());
+    assert_eq!(missing.plugins.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["legal"]);
+    let missing = held.missing(B.0);
+    assert_eq!(missing.connectors.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["Slack"]);
+    assert!(missing.plugins.is_empty());
+
+    // A sync copies sessions, never what belongs to an account: the inventory stays as it was.
+    e.sync();
+    assert_eq!(inventory::read(&e.ctx()), held);
+}
+
+/// The inventory reads records with the scanner's care: never through a symlinked folder, never a
+/// file that is not a session's own; and what it cannot read is counted, not taken for "none".
+#[cfg(unix)]
+#[test]
+fn the_inventory_trusts_only_what_the_scanner_trusts() {
+    use cc_same_core::inventory;
+    let e = Env::new();
+    let slack = json!({"name": "Slack", "url": "https://mcp.slack.com", "uuid": "u2", "tools": []});
+    let (x, y) = (uid(), uid());
+    e.record(A, &x, 100_000, json!({"remoteMcpServersConfig": [slack.clone()]}));
+    // B's folder is a link to A's: A's connectors are not B's.
+    let b = e.user_data.join(Surface::Code.dir_name()).join(B.0);
+    fs::create_dir_all(&b).unwrap();
+    std::os::unix::fs::symlink(e.code(A), b.join(B.1)).unwrap();
+    // A record that names another session, a damaged one, and a FIFO: none of them count, and the
+    // FIFO is never opened.
+    let other = e.record(C, &y, 100_000, json!({"remoteMcpServersConfig": [slack]}));
+    fs::rename(&other, e.code(C).join(format!("local_{}.json", uid()))).unwrap();
+    fs::write(e.code(C).join(format!("local_{}.json", uid())), "{not json").unwrap();
+    let fifo = std::ffi::CString::new(e.code(C).join(format!("local_{}.json", uid())).to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    // A plugin list that cannot be read.
+    let synced = e.root.join("plugins-synced").join(format!("{}_{}", C.1, C.0));
+    fs::create_dir_all(&synced).unwrap();
+    fs::write(synced.join("manifest.json"), "[").unwrap();
+
+    let held = inventory::read(&e.ctx());
+    assert_eq!(held.of(A.0).unwrap().connectors.len(), 1);
+    let b = held.of(B.0).unwrap();
+    assert!(b.connectors.is_empty());
+    assert_eq!(b.unreadable, 1);
+    let c = held.of(C.0).unwrap();
+    assert!(c.connectors.is_empty() && c.plugins.is_empty());
+    assert_eq!(c.unreadable, 4);
+}
+
+/// Plugins of the same name from different marketplaces are different plugins.
+#[test]
+fn plugins_are_told_apart_by_marketplace() {
+    use cc_same_core::inventory;
+    let e = Env::new();
+    for (p, market) in [(A, "company"), (B, "community")] {
+        e.code(p);
+        let synced = e.root.join("plugins-synced").join(format!("{}_{}", p.1, p.0));
+        fs::create_dir_all(&synced).unwrap();
+        let manifest = json!({"plugins": [{"name": "legal", "marketplaceName": market}]});
+        fs::write(synced.join("manifest.json"), manifest.to_string()).unwrap();
+    }
+    let held = inventory::read(&e.ctx());
+    let missing = held.missing(A.0);
+    assert_eq!(missing.plugins.len(), 1);
+    assert_eq!(missing.plugins[0].marketplace.as_deref(), Some("community"));
 }

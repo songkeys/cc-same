@@ -23,6 +23,7 @@ pub mod apply;
 pub mod config;
 pub mod desktop;
 pub mod fsx;
+pub mod inventory;
 pub mod logins;
 pub mod merge;
 pub mod model;

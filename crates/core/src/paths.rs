@@ -32,6 +32,8 @@ pub struct Paths {
     pub managed_settings: PathBuf,
     /// Claude Code CLI state (its `oauthAccount` labels an account with an email).
     pub claude_json: PathBuf,
+    /// Claude Code's copies of each organization's plugins, one `<org>_<account>` folder each.
+    pub synced_plugins: PathBuf,
 }
 
 impl Paths {
@@ -69,6 +71,7 @@ impl Paths {
             claude_settings: claude_home.join("settings.json"),
             managed_settings: default_managed_settings(),
             claude_json: home().join(".claude.json"),
+            synced_plugins: claude_home.join("plugins").join("synced"),
         }
     }
 

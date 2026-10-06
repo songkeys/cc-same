@@ -3,6 +3,7 @@
 use anyhow::{bail, Result};
 use cc_same_core::accounts::{self, NotFound, Roster, Slot, Strategy};
 use cc_same_core::desktop::{self, Quitting};
+use cc_same_core::inventory::{self, Inventory};
 use cc_same_core::logins;
 use cc_same_core::report::{self, Overview, Warning};
 use cc_same_core::retention::{self, Kept, Limit};
@@ -100,6 +101,11 @@ enum Cmd {
     /// Your accounts, numbered: which one Claude is signed in to, and what each has used
     #[command(visible_alias = "list")]
     Accounts {
+        #[arg(long)]
+        json: bool,
+    },
+    /// What stays with each account when you switch: connectors, org plugins, published artifacts
+    Inventory {
         #[arg(long)]
         json: bool,
     },
@@ -247,6 +253,7 @@ fn run(cli: Cli) -> Result<()> {
         }
         Cmd::Retention { days, keep, undo } => retention(&ctx, days, keep, undo),
         Cmd::Accounts { json } => accounts(&ctx, json),
+        Cmd::Inventory { json } => show_inventory(&ctx, json),
         Cmd::Switch { account, strategy, json } => switch(&ctx, account.as_deref(), strategy.map(Into::into), json),
         Cmd::Add => add(&ctx),
         Cmd::Remove { account, yes } => remove(&ctx, &account, yes),
@@ -663,15 +670,128 @@ fn switch(ctx: &Ctx, account: Option<&str>, strategy: Option<Strategy>, json: bo
         return Ok(());
     }
     let done = accounts::switch(ctx, &target, &quit_watch())?;
+    let held = inventory::read(ctx);
+    let missing = held.missing(&target);
+    let left_behind = done.from.as_deref().and_then(|f| held.of(f)).map(|h| h.artifacts.len()).unwrap_or(0);
     if json {
         let out = serde_json::json!({
             "schemaVersion": 1, "switched": true, "from": done.from, "to": done.to, "launched": done.launched,
+            "missing": missing, "artifactsLeftBehind": left_behind,
         });
         println!("{}", serde_json::to_string_pretty(&out)?);
         return Ok(());
     }
     let restarted = if done.launched { " (restarted)" } else { "" };
     println!("Claude is signed in to {name}{restarted}.");
+    if let (Some(from), true) = (&done.from, left_behind > 0) {
+        println!(
+            "The {left_behind} artifact(s) published from {} stay with it: {name} can update one only once it is shared with {name} with edit access.",
+            name_in(&roster, from)
+        );
+    }
+    for line in missing_lines(&missing) {
+        println!("Not seen on {name} yet: {line}");
+    }
+    Ok(())
+}
+
+/// "connectors Linear, Slack (seen in sessions)", "org plugins legal".
+fn missing_lines(missing: &inventory::Missing) -> Vec<String> {
+    let mut lines = Vec::new();
+    if !missing.connectors.is_empty() {
+        let names: Vec<&str> = missing.connectors.iter().map(|c| c.name.as_str()).collect();
+        lines.push(format!("connectors {} (seen in other accounts' sessions)", names.join(", ")));
+    }
+    if !missing.plugins.is_empty() {
+        let names: Vec<String> = missing.plugins.iter().map(plugin_name).collect();
+        lines.push(format!("org plugins {}", names.join(", ")));
+    }
+    lines
+}
+
+/// "legal (knowledge-work-plugins)": the same name from two marketplaces is two plugins.
+fn plugin_name(p: &inventory::Plugin) -> String {
+    match &p.marketplace {
+        Some(m) => format!("{} ({m})", p.name),
+        None => p.name.clone(),
+    }
+}
+
+fn show_inventory(ctx: &Ctx, json: bool) -> Result<()> {
+    // Only reads: the list as saved, not brought up to date.
+    let roster = Roster::load(&ctx.paths);
+    let held: Inventory = inventory::read(ctx);
+    // In the list's order, then anyone it does not have yet: signed in, kept, or seen on disk.
+    let found = logins::list(ctx);
+    let signed_in = found.signed_in.clone();
+    let mut order: Vec<&str> = roster.slots.iter().map(|s| s.account.as_str()).collect();
+    let others = found
+        .signed_in
+        .iter()
+        .chain(found.saved.iter().map(|s| &s.account))
+        .chain(held.accounts.iter().map(|h| &h.account));
+    for account in others {
+        if !order.contains(&account.as_str()) {
+            order.push(account);
+        }
+    }
+    if json {
+        let rows: Vec<serde_json::Value> = order
+            .iter()
+            .map(|a| {
+                serde_json::json!({
+                    "account": a,
+                    "number": roster.slot(a).map(|s| s.number),
+                    "email": roster.slot(a).and_then(|s| s.email.clone()),
+                    "signedIn": signed_in.as_deref() == Some(*a),
+                    "holdings": held.of(a),
+                    "missing": held.missing(a),
+                })
+            })
+            .collect();
+        let out =
+            serde_json::json!({ "schemaVersion": 1, "accounts": rows, "pluginsUnreadable": held.plugins_unreadable });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+    if order.is_empty() {
+        println!("No accounts yet: sign in to Claude.");
+        return Ok(());
+    }
+    let now = fsx::now_secs();
+    for (i, a) in order.iter().enumerate() {
+        if i > 0 {
+            println!();
+        }
+        let number = roster.slot(a).map(|s| format!("{}  ", s.number)).unwrap_or_default();
+        let state = if signed_in.as_deref() == Some(*a) { "  (signed in)" } else { "" };
+        println!("{number}{}{state}", name_in(&roster, a));
+        let h = held.of(a).cloned().unwrap_or_default();
+        let list = |names: Vec<&str>| if names.is_empty() { "none".to_string() } else { names.join(", ") };
+        println!("   connectors:  {}", list(h.connectors.iter().map(|c| c.name.as_str()).collect()));
+        let plugins: Vec<String> = h.plugins.iter().map(plugin_name).collect();
+        println!("   org plugins: {}", list(plugins.iter().map(String::as_str).collect()));
+        match h.artifacts.first() {
+            Some(newest) => println!(
+                "   artifacts:   {} published, newest {}{}",
+                h.artifacts.len(),
+                newest.title.as_deref().map(|t| format!("\"{t}\"")).unwrap_or_else(|| newest.url.clone()),
+                newest.updated_at.map(|t| format!(", {}", report::ago(t.min(now)))).unwrap_or_default(),
+            ),
+            None => println!("   artifacts:   none"),
+        }
+        for line in missing_lines(&held.missing(a)) {
+            println!("   not seen:    {line}");
+        }
+        if h.unreadable > 0 {
+            println!("   ! {} record(s) or list(s) could not be read, so this may be incomplete", h.unreadable);
+        }
+    }
+    println!();
+    if held.plugins_unreadable {
+        println!("! Claude Code's synced plugins could not be read, so no account's org plugins are listed.");
+    }
+    println!("Connectors are the ones seen in each account's sessions, not a check of what is connected now. Artifacts belong to the account that published them; share one with edit access to update it from another account.");
     Ok(())
 }
 

@@ -90,6 +90,7 @@ cc-same snapshots      list snapshots
 cc-same restore <id>   put every session list back as it was (quit Claude first)
 cc-same retention      how long Claude Code keeps transcripts (--keep, --undo)
 cc-same accounts       your accounts, numbered, with their plan usage (--json)
+cc-same inventory      what stays with each account: connectors, org plugins, artifacts (--json)
 cc-same switch [<who>] switch Claude to an account, or the next one (--strategy best) (macOS)
 cc-same add            restart Claude signed out, to add an account (the current one is kept)
 cc-same remove <who>   take an account off the list, forgetting the sign-in kept for it
