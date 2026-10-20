@@ -398,6 +398,8 @@ impl UniApp {
                         .small()
                         .icon(IconName::Settings2)
                         .tooltip(t("settings.title"))
+                        // Keep Windows' native caption hit-test off this button.
+                        .when(cfg!(windows), |button| button.occlude())
                         .on_click(cx.listener(|this, _, window, cx| this.open_settings(window, cx))),
                 ),
             )
