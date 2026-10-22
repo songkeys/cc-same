@@ -42,11 +42,19 @@ comes as a small desktop app and a command-line tool. Both share one engine.
   Português (Brasil) and Русский, following the system unless you pick one. Light and dark follow
   the system too.
 - **Undo built in.** Snapshots of every session list, restorable from Settings.
-- **One-click account switching** (macOS). Switch Claude to another account from the window or the
+- **Manual account switching** (macOS and Windows). Switch Claude to another account from the window or the
   menu bar, without signing out: CC Same keeps each sign-in and trades them while Claude restarts.
   Your accounts form a numbered list, the way [claude-swap](https://github.com/realiti4/claude-swap)
   keeps one: **Next Account** goes round it, and each account shows its 5-hour and weekly plan
   usage as Claude last read it.
+  Sign in manually once per account in the official app; Google is a login method, and labels
+  follow Claude account IDs. Saved sessions can expire or be revoked. On Windows, sessions stay
+  within the same Windows user, Desktop installation and encryption context. Its sign-in data
+  and CC Same state must be on the same local Windows volume. Claude restarts when switching;
+  if it stays in the tray, choose **File > Quit** and retry. A quit timeout leaves
+  sign-ins unchanged. Finish active replies before switching: Claude may quit without a work
+  confirmation, interrupting an in-progress reply that must then be resumed manually.
+  This does not promise third-party policy approval or zero account risk.
 - **Keeps itself up to date.** A new version downloads in the background and installs when the
   window is closed or the app quits; *What's new* shows what changed.
 
@@ -90,7 +98,7 @@ cc-same snapshots      list snapshots
 cc-same restore <id>   put every session list back as it was (quit Claude first)
 cc-same retention      how long Claude Code keeps transcripts (--keep, --undo)
 cc-same accounts       your accounts, numbered, with their plan usage (--json)
-cc-same switch [<who>] switch Claude to an account, or the next one (--strategy best) (macOS)
+cc-same switch [<who>] switch Claude to an account, or the next one (--strategy best) (macOS/Windows)
 cc-same add            restart Claude signed out, to add an account (the current one is kept)
 cc-same remove <who>   take an account off the list, forgetting the sign-in kept for it
 cc-same alias <who> <name>, disable <who>, enable <who>, move <who> <number>

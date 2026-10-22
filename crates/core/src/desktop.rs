@@ -27,6 +27,41 @@ const INIT_MARKER: &str = "[LocalSessionManager] Initialization succeeded";
 /// fall back to an older file's line about another account.
 const TAIL_BYTES: u64 = 12 * 1024 * 1024;
 
+#[cfg(windows)]
+mod windows;
+
+/// A launch target resolved before any sign-in files change.
+pub struct Launcher {
+    fake: bool,
+    #[cfg(windows)]
+    target: Option<windows::LaunchTarget>,
+}
+
+pub fn prepare_launch(ctx: &Ctx) -> anyhow::Result<Launcher> {
+    let fake = ctx.fake.running.is_some();
+    Ok(Launcher {
+        fake,
+        #[cfg(windows)]
+        target: if fake { None } else { Some(windows::resolve_launch(&ctx.paths.user_data)?) },
+    })
+}
+
+impl Launcher {
+    pub fn launch(&self) -> anyhow::Result<()> {
+        if self.fake {
+            return Ok(());
+        }
+        #[cfg(windows)]
+        {
+            self.target.as_ref().expect("real launcher was preflighted").launch()
+        }
+        #[cfg(not(windows))]
+        {
+            process::launch()
+        }
+    }
+}
+
 pub fn detect(ctx: &Ctx) -> AppState {
     let running = is_running(ctx);
     let mut accounts = BTreeSet::new();
@@ -119,7 +154,7 @@ pub enum NotReady {
 impl std::fmt::Display for NotReady {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            NotReady::StillOpen => "Claude did not quit, so nothing was changed",
+            NotReady::StillOpen => "Claude did not quit, so nothing was changed; choose File > Quit in Claude (closing the window may leave it in the tray), then try again",
             NotReady::Updating => "Claude is updating; try again in a minute",
             NotReady::Stopped => "stopped waiting for Claude to quit, so nothing was changed",
         })
@@ -167,10 +202,20 @@ const CONFIRM_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// work in progress, and for as long as that work takes when the answer was to wait. `watch`
 /// hears how it goes, and can stop waiting.
 pub fn quit(ctx: &Ctx, timeout: Duration, watch: &Watch) -> anyhow::Result<()> {
+    let launcher = prepare_launch(ctx)?;
+    quit_prepared(ctx, timeout, watch, &launcher)
+}
+
+pub(crate) fn quit_prepared(ctx: &Ctx, timeout: Duration, watch: &Watch, launcher: &Launcher) -> anyhow::Result<()> {
     if ctx.fake.running.is_some() {
         return Ok(());
     }
     let mut log = QuitLog::start(&ctx.paths.desktop_logs.join("main.log"));
+    #[cfg(windows)]
+    windows::ask_to_quit(launcher.target.as_ref().expect("real launcher was preflighted"), |message| ctx.log(message))?;
+    #[cfg(not(windows))]
+    let _ = launcher;
+    #[cfg(not(windows))]
     process::ask_to_quit();
     wait_for_quit(process::any_running, &mut log, (timeout, CONFIRM_TIMEOUT), watch)
 }
@@ -274,10 +319,7 @@ pub fn wait_for_update(ctx: &Ctx, timeout: Duration) -> anyhow::Result<()> {
 
 /// Start Claude.
 pub fn launch(ctx: &Ctx) -> anyhow::Result<()> {
-    if ctx.fake.running.is_some() {
-        return Ok(());
-    }
-    process::launch()
+    prepare_launch(ctx)?.launch()
 }
 
 pub fn last_known_account(ctx: &Ctx) -> Option<String> {
@@ -499,15 +541,15 @@ mod process {
         desktop_running().unwrap_or(true)
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     pub fn updating() -> bool {
         false
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     pub fn ask_to_quit() {}
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     pub fn launch() -> anyhow::Result<()> {
         anyhow::bail!("starting Claude is not supported on this system yet")
     }
@@ -537,55 +579,7 @@ mod process {
     }
 
     #[cfg(windows)]
-    pub fn desktop_running() -> Option<bool> {
-        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
-        use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-            CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
-        };
-        use windows_sys::Win32::System::Threading::{
-            OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
-        };
-
-        unsafe {
-            let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-            if snap == INVALID_HANDLE_VALUE {
-                return None;
-            }
-            let mut entry: PROCESSENTRY32W = std::mem::zeroed();
-            entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
-            let mut found = false;
-            let mut ok = Process32FirstW(snap, &mut entry) != 0;
-            while ok {
-                let len = entry.szExeFile.iter().position(|c| *c == 0).unwrap_or(entry.szExeFile.len());
-                let exe = String::from_utf16_lossy(&entry.szExeFile[..len]);
-                if exe.eq_ignore_ascii_case("claude.exe") {
-                    let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, entry.th32ProcessID);
-                    if !handle.is_null() {
-                        let mut buf = [0u16; 1024];
-                        let mut size = buf.len() as u32;
-                        if QueryFullProcessImageNameW(handle, 0, buf.as_mut_ptr(), &mut size) != 0 {
-                            let path = String::from_utf16_lossy(&buf[..size as usize]).to_lowercase();
-                            // Desktop lives in ...\AnthropicClaude\app-<version>\ or a Store
-                            // package; the Claude Code CLI (also claude.exe) does not.
-                            if path.contains("anthropicclaude")
-                                || path.contains("\\windowsapps\\claude")
-                                || path.contains("\\app-")
-                            {
-                                found = true;
-                            }
-                        }
-                        CloseHandle(handle);
-                    }
-                }
-                if found {
-                    break;
-                }
-                ok = Process32NextW(snap, &mut entry) != 0;
-            }
-            CloseHandle(snap);
-            Some(found)
-        }
-    }
+    pub(super) use super::windows::{desktop_running, updating};
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     pub fn desktop_running() -> Option<bool> {

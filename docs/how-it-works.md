@@ -15,7 +15,8 @@ sessions per **account and organization**:
 ```
 
 `<Claude data>` is `~/Library/Application Support/Claude` on macOS, `%APPDATA%\Claude` on
-Windows (the Store build virtualises it as `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude`), and
+Windows (Store builds also use `%LOCALAPPDATA%\Claude-Data\<package-family>` or
+`%LOCALAPPDATA%\Packages\<package-family>\LocalCache\Roaming\Claude`), and
 `~/.config/Claude` on Linux.
 
 An account gets a folder for every organization it is used in. Signing in to another account can
@@ -203,34 +204,64 @@ and can be undone with **Undo** or `cc-same retention --undo`. Don't set `cleanu
 Claude Desktop keeps one sign-in: the claude.ai web session (the `Cookies` database and the
 `Local Storage`, `Session Storage`, `IndexedDB` and `WebStorage` folders) and the tokens it caches
 in `config.json` (`oauth:tokenCache`, `oauth:tokenCacheV2`, `lastKnownAccountUuid`), all encrypted
-with a key in the login keychain. Signing out ends that sign-in on the server, so switching by
+by the operating system (the login keychain on macOS; the Windows user's encryption context on
+Windows). Signing out ends that sign-in on the server, so switching by
 signing out and in again loses it.
 
-CC Same switches without signing out (macOS for now):
+CC Same switches manually without signing out (macOS and Windows):
 
-1. It asks Claude to quit, the way the Dock does (SIGTERM, so no "control Claude" permission is
-   needed), waits for it and its helpers to exit and for its updater to finish, and takes the
-   sync lock. With work in progress, Claude asks first ("Claude is still working"); CC Same reads
+1. It takes the sync lock, resolves a launch target for the selected data folder, and validates
+   the saved sign-in's account ID before changes. On Windows, a Store profile must match its
+   registered package family; a conventional profile must use a conventional installation.
+   Arbitrary or ambiguous data overrides are refused. It asks Claude to quit using SIGTERM on
+   macOS or a native Quit menu command/window-close request on Windows, and waits for all Desktop
+   helpers and the updater. For Electron's custom application menu, Windows UI Automation invokes
+   the exact Menu, File and Quit items within trusted Desktop processes, with bounded provider
+   timeouts. A tray-hidden app is surfaced through the same preflighted launcher. There is no global
+   keyboard, pointer or focus injection. If the accessible menu is unavailable, native close remains
+   a safe fallback, and process exit is still required. It never force-kills a process.
+   A Windows close may hide in the tray:
+   a timeout leaves sign-ins untouched and asks you to use **File > Quit**, then retry.
+   When Claude asks about work in progress ("Claude is still working"), CC Same reads
    the answer from Claude's `main.log` (`vetoed by before-quit interceptor`, then
    `[updater-guard] restart deferred` for Wait for Claude). While Claude asks, CC Same says so and
    can stop waiting (Cancel in Claude leaves no trace to read; after ten minutes it gives up
    anyway); when the answer is to wait, it waits as long as the work takes. Stopping changes
-   nothing.
+   nothing. Claude does not always show that confirmation: Windows runtime validation observed
+   an in-progress reply being marked interrupted after normal Quit. Finish replies before
+   switching; native graceful Quit does not guarantee active work will complete first.
 2. It moves Claude's sign-in, as it is, to `<state>/logins/<account>` (a rename on the same disk;
    the account is `lastKnownAccountUuid`), and moves the target account's back in its place: the
    files as they were, and the `config.json` keys written back in Claude's own format.
    `bridge-state.json`, tied to the old account, is dropped; Claude makes it again.
-3. It starts Claude again if it was running.
+   On Windows this includes `Network/Cookies`, legacy root `Cookies` when present, and their
+   `-journal`, `-wal` and `-shm` sidecars, plus the web-storage folders. `Local State` stays in
+   place. A saved profile contains a SHA-256 fingerprint of its `os_crypt.encrypted_key` value;
+   missing or different metadata blocks restoration before live files move. Use the same Windows
+   user, installation and encryption context; copying profiles between computers is unsupported.
+   Windows also requires the sign-in files and CC Same state to share one verifiable local volume,
+   including redirected data folders. Credential moves use atomic rename only, with no cross-volume
+   copy fallback; incompatible storage is rejected before sign-in files change.
+   Only the three sign-in config keys are restored. Other settings, session indexes, projects,
+   transcripts, CLAUDE.md, skills and MCP configuration stay in place.
+3. It starts that same installation again if it was running (and always when adding an account).
+   If launch fails after the switch commits, the error says so; the outgoing account remains
+   saved and recoverable through CC Same.
 
-Nothing is decrypted, read, refreshed or sent anywhere: Claude's own files move between two
-folders on the same Mac. Tokens rotate while Claude runs, so the sign-in being left is saved afresh
+No token is parsed, decrypted, refreshed or transmitted: Claude's own encrypted files move between
+local folders. Tokens rotate while Claude runs, so the sign-in being left is saved afresh
 at every switch, and a saved copy is put back only once. Every move is written to a journal first:
 a failed switch is undone, and one cut short (a crash) is undone or finished the next time.
 
 To add an account, CC Same sets the current sign-in aside and restarts Claude on its sign-in page;
 signing in there goes through Anthropic's own flow as usual, and CC Same takes note once Claude has
-a new sign-in. A sign-in left unused for about four weeks expires on the server; Claude then asks
+a new sign-in. Each account requires one initial manual login in the official app; Google is an
+entry method, while saved labels follow Claude account IDs. A sign-in left unused for about four
+weeks may expire or be revoked on the server; Claude then asks
 to sign in again, and nothing else is lost.
+
+There is no automatic quota-triggered rotation, device-fingerprint change, proxy change or new
+authentication flow. This local tool does not promise service-policy approval or zero suspension risk.
 
 Why not trade only the token, as [claude-swap](https://github.com/realiti4/claude-swap) does for
 the Claude Code command line? Desktop does not use that login at all: it hands its Code and Cowork

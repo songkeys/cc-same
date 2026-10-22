@@ -162,6 +162,11 @@ pub fn default_user_data() -> PathBuf {
 /// whichever copy Desktop touched last.
 #[cfg(windows)]
 fn windows_user_data() -> Option<PathBuf> {
+    newest_windows_user_data(dirs::config_dir().as_deref(), dirs::data_local_dir().as_deref())
+}
+
+#[cfg(windows)]
+fn newest_windows_user_data(roaming: Option<&Path>, local: Option<&Path>) -> Option<PathBuf> {
     use std::fs;
     use std::time::SystemTime;
 
@@ -174,19 +179,58 @@ fn windows_user_data() -> Option<PathBuf> {
             }
         }
     };
-    if let Some(roaming) = dirs::config_dir() {
+    if let Some(roaming) = roaming {
         consider(roaming.join("Claude"));
     }
-    if let Some(local) = dirs::data_local_dir() {
+    if let Some(local) = local {
+        if let Ok(entries) = fs::read_dir(local.join("Claude-Data")) {
+            for e in entries.flatten() {
+                if e.file_name().to_string_lossy().to_ascii_lowercase().starts_with("claude_") {
+                    consider(e.path());
+                }
+            }
+        }
         if let Ok(entries) = fs::read_dir(local.join("Packages")) {
             for e in entries.flatten() {
-                if e.file_name().to_string_lossy().starts_with("Claude_") {
+                if e.file_name().to_string_lossy().to_ascii_lowercase().starts_with("claude_") {
                     consider(e.path().join("LocalCache").join("Roaming").join("Claude"));
                 }
             }
         }
     }
     best.map(|(_, p)| p)
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    #[test]
+    fn modern_and_legacy_profiles_compete_by_config_modified_time() {
+        use std::fs;
+        use std::time::{Duration, SystemTime};
+        let temp = tempfile::tempdir().unwrap();
+        let roaming = temp.path().join("Roaming");
+        let local = temp.path().join("Local");
+        let profiles = [
+            roaming.join("Claude"),
+            local.join("Packages/Claude_old/LocalCache/Roaming/Claude"),
+            local.join("Claude-Data/claude_new"),
+        ];
+        for (i, dir) in profiles.iter().enumerate() {
+            fs::create_dir_all(dir).unwrap();
+            let f = fs::File::create(dir.join("config.json")).unwrap();
+            f.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(100 + i as u64)).unwrap();
+        }
+        assert_eq!(newest_windows_user_data(Some(&roaming), Some(&local)), Some(profiles[2].clone()));
+        fs::OpenOptions::new()
+            .write(true)
+            .open(profiles[0].join("config.json"))
+            .unwrap()
+            .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(200))
+            .unwrap();
+        assert_eq!(newest_windows_user_data(Some(&roaming), Some(&local)), Some(profiles[0].clone()));
+    }
 }
 
 fn default_desktop_logs(user_data: &Path) -> PathBuf {
