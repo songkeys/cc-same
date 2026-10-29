@@ -259,16 +259,20 @@ impl Store {
         .detach();
     }
 
-    /// Re-read when Claude's session folders, Claude itself, our state or the agent change,
-    /// and at least every 12 seconds.
+    /// Re-read when Claude's session folders, Claude itself, our state or the agent change, and,
+    /// while the window is open, Claude's record of plan use; and at least every 12 seconds.
     fn watch_for_changes(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let mut ticks = 0u32;
             loop {
                 cx.background_executor().timer(Duration::from_millis(1500)).await;
                 ticks += 1;
-                let Ok((ctx, last)) = this.update(cx, |this, _| (this.ctx.clone(), this.fingerprint)) else { break };
-                let fp = cx.background_executor().spawn(async move { fingerprint(&ctx) }).await;
+                let Ok((ctx, last, looking)) =
+                    this.update(cx, |this, cx| (this.ctx.clone(), this.fingerprint, !cx.windows().is_empty()))
+                else {
+                    break;
+                };
+                let fp = cx.background_executor().spawn(async move { fingerprint(&ctx, looking) }).await;
                 if fp != last || ticks.is_multiple_of(8) {
                     let alive = this.update(cx, |this, cx| {
                         this.fingerprint = fp;
@@ -779,6 +783,23 @@ impl Store {
         .detach();
     }
 
+    /// Note when an account's weekly window renews (a moment it renews, in Unix seconds), or forget
+    /// it. Like the name, it only edits the list.
+    pub fn set_weekly_reset(&mut self, account: String, at: Option<i64>, cx: &mut Context<Self>) {
+        let ctx = self.ctx.clone();
+        cx.spawn(async move |this, cx| {
+            let result =
+                cx.background_executor().spawn(async move { accounts::set_weekly_reset(&ctx, &account, at) }).await;
+            let _ = this.update(cx, |this, cx| {
+                if let Err(e) = result {
+                    cx.emit(StoreEvent::Done(Err(format!("{e:#}"))));
+                }
+                this.refresh(cx);
+            });
+        })
+        .detach();
+    }
+
     /// An account's name as the window shows it.
     pub fn account_name(&self, id: &str) -> String {
         if let Some(account) = self.accounts().into_iter().find(|a| a.id == id) {
@@ -859,17 +880,22 @@ fn agent_outdated(program: &[String], bin: &Path) -> bool {
 
 /// Changes worth re-reading for: Claude's session folders and state, and ours (the account list
 /// included).
-fn fingerprint(ctx: &Ctx) -> u64 {
+/// What the window shows changes with; `usage` adds Claude's record of plan use, so a new reading
+/// shows as soon as Claude writes it while someone is looking.
+fn fingerprint(ctx: &Ctx, usage: bool) -> u64 {
     let mut h = DefaultHasher::new();
     watch::fingerprint(ctx, desktop::is_running(ctx)).hash(&mut h);
     let paths = &ctx.paths;
-    let files = [
+    let mut files = vec![
         paths.state_file(),
         paths.heartbeat_file(),
         paths.config_file(),
         paths.claude_settings.clone(),
         paths.roster_file(),
     ];
+    if usage {
+        files.push(paths.usage_history());
+    }
     for p in files {
         if let Ok(md) = std::fs::metadata(&p) {
             fsx::mtime_ns(&md).hash(&mut h);

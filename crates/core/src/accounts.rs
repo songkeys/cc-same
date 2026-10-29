@@ -33,6 +33,9 @@ pub struct Slot {
     pub added_at: f64,
     /// Organizations Claude was seen using it with, to tell its plan usage apart.
     pub orgs: Vec<String>,
+    /// A moment its weekly plan window renews (Unix seconds), given by hand: it renews every week
+    /// from there ([`usage::next_weekly_reset`]). Claude keeps no reset time on disk.
+    pub weekly_reset: Option<i64>,
 }
 
 impl Slot {
@@ -300,6 +303,17 @@ pub fn set_alias(ctx: &Ctx, account: &str, alias: Option<&str>) -> Result<Roster
         }
         if let Some(slot) = roster.slot_mut(account) {
             slot.alias = alias.clone();
+        }
+        Ok(())
+    })?;
+    Ok(roster)
+}
+
+/// Note when an account's weekly plan window renews (any one renewal), or forget it.
+pub fn set_weekly_reset(ctx: &Ctx, account: &str, at: Option<i64>) -> Result<Roster> {
+    let ((), roster) = edit(&ctx.paths, |roster| {
+        if let Some(slot) = roster.slot_mut(account) {
+            slot.weekly_reset = at;
         }
         Ok(())
     })?;

@@ -24,7 +24,16 @@ use gpui_kit::{
 };
 
 pub fn open(store: Entity<Store>, window: &mut Window, cx: &mut App) {
-    window.open_sheet(cx, move |sheet, _, cx| sheet.title(t("settings.title")).size(px(360.)).child(body(&store, cx)));
+    // A window of its own keeps its title bar clear and shows the list beside the sheet; the
+    // panel, with no title bar and no room to spare, gives the sheet all of itself.
+    let panel = crate::uses_panel(cx);
+    gpui_kit::component::Theme::global_mut(cx).sheet.margin_top =
+        if panel { px(0.) } else { gpui_kit::component::TITLE_BAR_HEIGHT };
+    window.open_sheet(cx, move |sheet, _, cx| {
+        let sheet = sheet.title(t("settings.title"));
+        let sheet = if panel { sheet.size(gpui_kit::relative(1.)) } else { sheet.size(px(360.)) };
+        sheet.child(body(&store, cx))
+    });
 }
 
 fn body(store: &Entity<Store>, cx: &mut App) -> impl IntoElement {

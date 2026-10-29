@@ -212,6 +212,7 @@ mod mac {
             Scene { overlay: Overlay::ConfirmNext, ..scene("next-confirm-dark", Dark, in_sync) },
             Scene { overlay: Overlay::Name(GRACE.0), ..scene("name-light", Light, in_sync) },
             Scene { language: "zh-CN", overlay: Overlay::Name(ADA.0), ..scene("zh-CN-name-dark", Dark, named) },
+            Scene { overlay: Overlay::Name(ADA.0), ..scene("name-reset-light", Light, named) },
             Scene { overlay: Overlay::NameRefused, ..scene("name-refused-light", Light, in_sync) },
             scene("named-light", Light, named),
             Scene { overlay: Overlay::Hover(GRACE.0), ..scene("hover-light", Light, in_sync) },
@@ -600,12 +601,13 @@ mod mac {
         Some(s.overview())
     }
 
-    /// Ada goes by "work"; the third account joined the list without an email CC Same could find,
-    /// and goes by "studio".
+    /// Ada goes by "work", and her week renews in 3 days and 4 hours; the third account joined the
+    /// list without an email CC Same could find, and goes by "studio".
     fn named(s: &Sample) -> Option<Overview> {
         let mut ov = in_sync(s)?;
         if let Some(ada) = ov.roster.slots.iter_mut().find(|slot| slot.account == ADA.0) {
             ada.alias = Some("work".into());
+            ada.weekly_reset = Some(fsx::now_secs() as i64 + 3 * 86_400 + 4 * 3600 + 1800);
         }
         ov.roster.slots.push(Slot {
             number: 3,
