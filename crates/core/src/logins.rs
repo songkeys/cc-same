@@ -139,7 +139,8 @@ pub struct Switched {
 
 /// Quit Claude, set its sign-in aside, put `target`'s back, and start Claude again if it was
 /// running (or, to sign in, in any case). `watch` follows Claude's quit, and can stop waiting for
-/// it; once Claude has quit, the switch goes through.
+/// it; once Claude has quit, the switch goes through. Should it fail after Claude quit, Claude
+/// starts again as it was.
 pub fn switch(ctx: &Ctx, target: Target, watch: &desktop::Watch) -> Result<Switched> {
     // A stand-in Desktop (tests, scripts) works everywhere.
     if !supported() && ctx.fake.running.is_none() {
@@ -156,6 +157,24 @@ pub fn switch(ctx: &Ctx, target: Target, watch: &desktop::Watch) -> Result<Switc
         }
     }
     let was_running = desktop::is_running(ctx);
+    let from = quit_and_swap(ctx, to.as_deref(), was_running, watch).inspect_err(|error| {
+        // Not while its updater replaces the app: starting Claude then breaks it.
+        let updating = error.downcast_ref::<desktop::NotReady>() == Some(&desktop::NotReady::Updating);
+        if was_running && !updating && !desktop::is_running(ctx) {
+            if let Err(e) = desktop::launch(ctx) {
+                ctx.log(format!("starting Claude again after a failed switch: {e:#}"));
+            }
+        }
+    })?;
+    let launched = was_running || to.is_none();
+    if launched {
+        desktop::launch(ctx)?;
+    }
+    Ok(Switched { from, to, launched })
+}
+
+/// Make sure Claude and its updater are done, then trade sign-ins; who was signed in.
+fn quit_and_swap(ctx: &Ctx, to: Option<&str>, was_running: bool, watch: &desktop::Watch) -> Result<Option<String>> {
     if was_running {
         desktop::quit(ctx, QUIT_TIMEOUT, watch)?;
     }
@@ -166,20 +185,16 @@ pub fn switch(ctx: &Ctx, target: Target, watch: &desktop::Watch) -> Result<Switc
     }
     recover(&ctx.paths)?;
     let from = desktop::last_known_account(ctx);
-    if from.is_some() && from == to {
+    if from.is_some() && from.as_deref() == to {
         // Already signed in to it; a copy set aside earlier is out of date.
-        if let Some(account) = &to {
+        if let Some(account) = to {
             let _ = fs::remove_dir_all(saved_dir(&ctx.paths, account));
         }
     } else {
         let email = from.as_ref().and_then(|a| crate::scan::account_labels(ctx).remove(a));
-        swap(&ctx.paths, from.as_deref(), to.as_deref(), email)?;
+        swap(&ctx.paths, from.as_deref(), to, email)?;
     }
-    let launched = was_running || to.is_none();
-    if launched {
-        desktop::launch(ctx)?;
-    }
-    Ok(Switched { from, to, launched })
+    Ok(from)
 }
 
 /// Delete the sign-in saved for `account`.

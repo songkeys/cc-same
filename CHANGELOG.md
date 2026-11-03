@@ -3,6 +3,17 @@
 What changed in each version of CC Same. The app shows these notes after it updates, and under
 Settings › Updates.
 
+## Unreleased
+
+### Fixed
+
+- **macOS: switching accounts could stop at "Switching…".** CC Same waited for every program in
+  Claude's app to exit, and Claude's crash reporter can keep running after Claude quits. Claude
+  closed, nothing happened for a minute, then the switch gave up and left Claude closed. CC Same
+  now waits for Claude and its helpers only, and a switch that fails after Claude quit opens
+  Claude again. Claude's updater went unnoticed too; a switch now waits for an update to finish
+  before touching Claude's files.
+
 ## 0.1.12 - 2026-10-28
 
 ### Changed

@@ -218,17 +218,19 @@ CC Same switches without signing out (macOS for now):
 
 1. It asks Claude to quit, the way the Dock does (SIGTERM, so no "control Claude" permission is
    needed), waits for it and its helpers to exit and for its updater to finish, and takes the
-   sync lock. With work in progress, Claude asks first ("Claude is still working"); CC Same reads
-   the answer from Claude's `main.log` (`vetoed by before-quit interceptor`, then
-   `[updater-guard] restart deferred` for Wait for Claude). While Claude asks, CC Same says so and
-   can stop waiting (Cancel in Claude leaves no trace to read; after ten minutes it gives up
-   anyway); when the answer is to wait, it waits as long as the work takes. Stopping changes
-   nothing.
+   sync lock. The other programs in Claude's app don't count: its crash reporter, for one, can
+   keep running after Claude quits. With work in progress, Claude asks first ("Claude is still
+   working"); CC Same reads the answer from Claude's `main.log`
+   (`vetoed by before-quit interceptor`, then `[updater-guard] restart deferred` for Wait for
+   Claude). While Claude asks, CC Same says so and can stop waiting (Cancel in Claude leaves no
+   trace to read; after ten minutes it gives up anyway); when the answer is to wait, it waits as
+   long as the work takes. Stopping changes nothing.
 2. It moves Claude's sign-in, as it is, to `<state>/logins/<account>` (a rename on the same disk;
    the account is `lastKnownAccountUuid`), and moves the target account's back in its place: the
    files as they were, and the `config.json` keys written back in Claude's own format.
    `bridge-state.json`, tied to the old account, is dropped; Claude makes it again.
-3. It starts Claude again if it was running.
+3. It starts Claude again if it was running. So does a switch that fails after Claude quit, with
+   nothing changed.
 
 Nothing is decrypted, read, refreshed or sent anywhere: Claude's own files move between two
 folders on the same Mac. Tokens rotate while Claude runs, so the sign-in being left is saved afresh
