@@ -872,7 +872,7 @@ dependencies = [
 
 [[package]]
 name = "cc-same-app"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "anyhow",
  "auto-launch",
@@ -898,7 +898,7 @@ dependencies = [
 
 [[package]]
 name = "cc-same-core"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "anyhow",
  "chrono",
