@@ -207,6 +207,13 @@ mod mac {
                 overlay: Overlay::ConfirmSwitch,
                 ..scene("zh-CN-switch-confirm-dark", Dark, in_sync)
             },
+            // Claude is closed: it opens, rather than quitting and opening again.
+            Scene { overlay: Overlay::ConfirmSwitch, ..scene("switch-confirm-closed-light", Light, quit) },
+            Scene {
+                language: "zh-CN",
+                overlay: Overlay::ConfirmSwitch,
+                ..scene("zh-CN-switch-confirm-closed-dark", Dark, quit)
+            },
             Scene { overlay: Overlay::ConfirmSwitchUnsaved, ..scene("switch-confirm-unsaved-light", Light, in_sync) },
             Scene { overlay: Overlay::ConfirmRemove, ..scene("remove-confirm-light", Light, in_sync) },
             Scene { overlay: Overlay::ConfirmNext, ..scene("next-confirm-dark", Dark, in_sync) },
@@ -636,7 +643,10 @@ mod mac {
 
     fn quit(s: &Sample) -> Option<Overview> {
         let mut ov = in_sync(s)?;
+        // As Claude being closed reads: nothing is open in it.
         ov.app.running = false;
+        ov.app.open_account = None;
+        ov.app.open_org = None;
         Some(ov)
     }
 

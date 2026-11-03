@@ -664,7 +664,14 @@ impl Store {
                         let tell = |quitting: Quitting| waiting.set(quitting);
                         let watch = Watch { progress: Some(&tell), stop: Some(&waiting.stop) };
                         match &target {
-                            Some(account) => accounts::switch(&ctx, account, &watch),
+                            // Switching from here is to use Claude now: it opens even if it was
+                            // closed, where the switch alone leaves it closed.
+                            Some(account) => accounts::switch(&ctx, account, &watch).and_then(|switched| {
+                                if !switched.launched {
+                                    desktop::launch(&ctx)?;
+                                }
+                                Ok(switched)
+                            }),
                             None => accounts::add(&ctx, &watch),
                         }
                     }

@@ -230,7 +230,8 @@ CC Same switches without signing out (macOS for now):
    files as they were, and the `config.json` keys written back in Claude's own format.
    `bridge-state.json`, tied to the old account, is dropped; Claude makes it again.
 3. It starts Claude again if it was running. So does a switch that fails after Claude quit, with
-   nothing changed.
+   nothing changed. A switch from the window or the menu bar opens Claude even when it was closed;
+   `cc-same switch` leaves a closed Claude closed.
 
 Nothing is decrypted, read, refreshed or sent anywhere: Claude's own files move between two
 folders on the same Mac. Tokens rotate while Claude runs, so the sign-in being left is saved afresh

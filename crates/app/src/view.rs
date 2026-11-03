@@ -233,7 +233,7 @@ impl UniApp {
     /// by mistake, and switching restarts Claude. An account whose sign-in is kept switches; one
     /// without restarts Claude on its sign-in page instead, as its "Sign in" button does.
     pub fn confirm_switch(&mut self, account: String, window: &mut Window, cx: &mut Context<Self>) {
-        let (saved, name, email, current) = {
+        let (saved, name, email, current, running) = {
             let store = self.store.read(cx);
             let Some(overview) = store.overview.as_ref() else { return };
             if store.busy.is_some() || overview.logins.signed_in.as_deref() == Some(account.as_str()) {
@@ -243,7 +243,7 @@ impl UniApp {
             let email = store.accounts().into_iter().find(|a| a.id == account).and_then(|a| a.email);
             let email = email.or_else(|| saved.as_ref().and_then(|s| s.email.clone()));
             let current = overview.logins.signed_in.as_ref().map(|id| store.account_name(id));
-            (saved, store.account_name(&account), email, current)
+            (saved, store.account_name(&account), email, current, overview.app.running)
         };
         let Some(saved) = saved else {
             return self.confirm_sign_in(email, window, cx);
@@ -251,9 +251,10 @@ impl UniApp {
         let store = self.store.clone();
         window.open_alert_dialog(cx, move |alert, _, cx| {
             let muted = cx.theme().muted_foreground;
+            let body = if running { "switch.confirm_body" } else { "switch.confirm_body_closed" };
             let description = v_flex()
                 .gap_2()
-                .child(tf("switch.confirm_body", &[("account", &name)]))
+                .child(tf(body, &[("account", &name)]))
                 .when_some(current.as_ref(), |el, current| el.child(tf("signin.keeps", &[("account", current)])))
                 .when(saved.stale(), |el| {
                     el.child(div().pt_1().text_size(rems(0.846)).text_color(muted).child(t("account.stale")))

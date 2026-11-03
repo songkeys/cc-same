@@ -5,6 +5,12 @@ Settings › Updates.
 
 ## Unreleased
 
+### Changed
+
+- **Switching opens Claude.** Switching from the window or the menu bar restarted Claude only when
+  it was open: with Claude closed, it changed the sign-in and left Claude closed. Now Claude opens
+  on the new account either way. `cc-same switch` still leaves a closed Claude closed.
+
 ### Fixed
 
 - **macOS: switching accounts could stop at "Switching…".** CC Same waited for every program in

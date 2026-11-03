@@ -2315,6 +2315,17 @@ _version: 2
   es: "Claude se cierra y vuelve a abrirse con la sesión de %{account}."
   pt-BR: "O Claude fecha e abre de novo, conectado como %{account}."
   ru: "Claude закроется и снова откроется, уже в аккаунте %{account}."
+"switch.confirm_body_closed":
+  en: "Claude opens, signed in to %{account}."
+  zh-CN: "Claude 会打开，登录的是 %{account}。"
+  zh-TW: "Claude 會開啟，登入的是 %{account}。"
+  ja: "Claude が %{account} にサインインした状態で開きます。"
+  ko: "Claude가 %{account} 계정으로 로그인된 상태로 열립니다."
+  fr: "Claude s’ouvre, connecté à %{account}."
+  de: "Claude öffnet sich, angemeldet als %{account}."
+  es: "Claude se abre con la sesión de %{account}."
+  pt-BR: "O Claude abre, conectado como %{account}."
+  ru: "Claude откроется уже в аккаунте %{account}."
 "account.no_lists":
   en: "No sessions yet"
   zh-CN: "还没有会话"
