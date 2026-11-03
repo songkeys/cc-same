@@ -1,5 +1,6 @@
 //! The menu bar (macOS) and notification area (Windows, Linux) icon: the headline at a glance,
-//! Sync now, the background switch, and the way back to the window.
+//! the accounts to switch between, Sync now, the background switch, and the way back to the
+//! window.
 
 use crate::i18n::{t, tf};
 use crate::model::Busy;
@@ -8,9 +9,11 @@ use gpui_kit::App;
 use std::rc::Rc;
 
 /// What a click in the tray asks for.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     Open,
+    /// Open the panel under the icon, or close it (a left click on macOS).
+    Panel(Option<crate::panel::Anchor>),
     SyncNow,
     ToggleBackground,
     Settings,
@@ -25,11 +28,11 @@ pub enum Command {
     Quit,
 }
 
-/// An account in the tray's "Switch Account" menu.
+/// An account in the tray's menu.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TrayAccount {
     pub id: String,
-    /// Its number and name, and what it last used of its plan.
+    /// Its number and name, and the fuller window of its plan: `1  work · 7d 58%`.
     pub label: String,
     /// Claude is signed in to it.
     pub current: bool,
@@ -57,10 +60,10 @@ pub struct Status {
     pub can_switch: bool,
     /// Every account CC Same knows: the list by number, then the others.
     pub accounts: Vec<TrayAccount>,
-    /// "Next Account: bob@example.com", and whether there is one.
+    /// "Next Account", and whether there is one.
     pub next_label: String,
     pub has_next: bool,
-    pub switch_label: String,
+    /// "Add Account…": Claude restarts on its sign-in page.
     pub sign_in_label: String,
     pub quit: String,
 }
@@ -81,10 +84,6 @@ impl Status {
         let saved = logins.saved.iter().map(|s| (s.account.clone(), store.account_name(&s.account)));
         let accounts = tray_accounts(&rows, logins.signed_in.as_deref(), saved);
         let next = store.next_account();
-        let next_label = match &next {
-            Some(id) => tf("tray.next_account", &[("account", &store.account_name(id))]),
-            None => t("tray.next_none"),
-        };
         Status {
             title: mood.title(),
             detail: mood.detail(),
@@ -99,12 +98,12 @@ impl Status {
             update,
             update_enabled,
             // Decided by the system, not by the overview: the menu is built at launch, before the
-            // first overview arrives, and the submenu is only ever added then.
+            // first overview arrives.
             can_switch: cc_same_core::logins::supported(),
             accounts,
-            next_label,
+            // Which account is next shows in the list above it; naming it here made the menu wide.
+            next_label: t("tray.next_none"),
             has_next: next.is_some(),
-            switch_label: t("tray.switch_account"),
             sign_in_label: t("tray.sign_in_another"),
             quit: t("app.quit"),
         }
@@ -115,8 +114,18 @@ impl Status {
     }
 }
 
-/// The accounts menu: the window's rows (the list by number, then the others), and any account
-/// with a sign-in kept that has no row, each once.
+/// The longest name the menu shows; a longer one ends in "…", so the menu stays narrow.
+const NAME_MAX: usize = 22;
+
+fn clipped(name: &str) -> String {
+    match name.chars().count() > NAME_MAX {
+        true => format!("{}…", name.chars().take(NAME_MAX - 1).collect::<String>()),
+        false => name.to_string(),
+    }
+}
+
+/// The accounts in the menu: the window's rows (the list by number, then the others), and any
+/// account with a sign-in kept that has no row, each once.
 fn tray_accounts(
     rows: &[crate::model::Account],
     signed_in: Option<&str>,
@@ -126,11 +135,11 @@ fn tray_accounts(
         .iter()
         .map(|a| {
             let mut label = match a.number {
-                Some(n) => format!("{n}  {}", a.name),
-                None => a.name.clone(),
+                Some(n) => format!("{n}  {}", clipped(&a.name)),
+                None => clipped(&a.name),
             };
             if let Some(usage) = a.usage {
-                label = format!("{label}  ({})", usage.dated());
+                label = format!("{label} · {}", usage.short());
             }
             TrayAccount { id: a.id.clone(), label, current: signed_in == Some(a.id.as_str()) }
         })
@@ -138,7 +147,7 @@ fn tray_accounts(
     for (id, name) in saved {
         if !list.iter().any(|a| a.id == id) {
             let current = signed_in == Some(id.as_str());
-            list.push(TrayAccount { id, label: name, current });
+            list.push(TrayAccount { id, label: clipped(&name), current });
         }
     }
     list
@@ -154,6 +163,11 @@ impl Tray {
 
     pub fn update(&self, status: &Status) {
         self.0.update(status);
+    }
+
+    /// Where the panel hangs from under the icon, when the system says where the icon is.
+    pub fn anchor(&self) -> Option<crate::panel::Anchor> {
+        self.0.anchor()
     }
 }
 
@@ -171,7 +185,7 @@ mod platform {
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::time::Duration;
-    use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu};
+    use tray_icon::menu::{CheckMenuItem, IsMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
     use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
     // macOS draws a template image in the menu bar's own color; Windows wants the colored icon.
@@ -189,6 +203,11 @@ mod platform {
         Icon::from_rgba(rgba, width, height).context("tray icon")
     }
 
+    fn anchor_of(rect: tray_icon::Rect) -> Option<crate::panel::Anchor> {
+        let (at, size) = (rect.position, rect.size);
+        crate::panel::below(at.x, at.y, size.width.into(), size.height.into())
+    }
+
     pub struct Tray {
         icon: TrayIcon,
         title: MenuItem,
@@ -199,37 +218,54 @@ mod platform {
         settings: MenuItem,
         update: MenuItem,
         quit: MenuItem,
-        /// "Switch Account", when switching is available.
-        accounts: Option<Submenu>,
-        /// What each item of the accounts menu does; they change with the accounts.
+        menu: Menu,
+        /// How many items the accounts take in the menu, after the headline; none when switching
+        /// is not available.
+        account_items: std::cell::Cell<usize>,
+        /// What each of those items does; they change with the accounts.
         account_commands: Rc<RefCell<Vec<(MenuId, Command)>>>,
         last: RefCell<Status>,
         _events: Task<()>,
     }
 
-    /// Fill the accounts menu: the next account, every account (the one in use checked), then
-    /// signing in to another.
-    fn fill_accounts(menu: &Submenu, status: &Status, commands: &RefCell<Vec<(MenuId, Command)>>) {
-        while menu.remove_at(0).is_some() {}
+    /// Where the accounts start in the menu: after the headline, its detail and a separator.
+    const ACCOUNTS_AT: usize = 3;
+
+    /// Put the accounts in the menu in place of the `previous` items there: every account (the one
+    /// in use checked), the next account, signing in to another, and a separator. Returns how
+    /// many items they take.
+    fn fill_accounts(
+        menu: &Menu,
+        previous: usize,
+        status: &Status,
+        commands: &RefCell<Vec<(MenuId, Command)>>,
+    ) -> usize {
+        for _ in 0..previous {
+            menu.remove_at(ACCOUNTS_AT);
+        }
         let mut found = Vec::new();
-        let next = MenuItem::new(&status.next_label, status.has_next && status.can_sync, None);
-        let _ = menu.append(&next);
-        found.push((next.id().clone(), Command::SwitchNext));
-        let _ = menu.append(&PredefinedMenuItem::separator());
+        let mut items: Vec<Box<dyn IsMenuItem>> = Vec::new();
         for account in &status.accounts {
             let item = CheckMenuItem::new(&account.label, !account.current && status.can_sync, account.current, None);
-            let _ = menu.append(&item);
             if !account.current {
                 found.push((item.id().clone(), Command::SwitchTo(account.id.clone())));
             }
+            items.push(Box::new(item));
         }
-        if !status.accounts.is_empty() {
-            let _ = menu.append(&PredefinedMenuItem::separator());
-        }
+        let next = MenuItem::new(&status.next_label, status.has_next && status.can_sync, None);
+        found.push((next.id().clone(), Command::SwitchNext));
         let sign_in = MenuItem::new(&status.sign_in_label, status.can_sync, None);
-        let _ = menu.append(&sign_in);
         found.push((sign_in.id().clone(), Command::SignInAnother));
+        items.extend([
+            Box::new(next) as Box<dyn IsMenuItem>,
+            Box::new(sign_in),
+            Box::new(PredefinedMenuItem::separator()),
+        ]);
+        for (i, item) in items.iter().enumerate() {
+            let _ = menu.insert(item.as_ref(), ACCOUNTS_AT + i);
+        }
         *commands.borrow_mut() = found;
+        items.len()
     }
 
     impl Tray {
@@ -244,16 +280,8 @@ mod platform {
             let update = MenuItem::new(&status.update, status.update_enabled, None);
             let quit = MenuItem::new(&status.quit, true, None);
             let account_commands = Rc::new(RefCell::new(Vec::new()));
-            let accounts = status.can_switch.then(|| {
-                let menu = Submenu::new(&status.switch_label, true);
-                fill_accounts(&menu, status, &account_commands);
-                menu
-            });
             let menu = Menu::new();
             menu.append_items(&[&title, &detail, &PredefinedMenuItem::separator(), &sync, &background])?;
-            if let Some(accounts) = &accounts {
-                menu.append(accounts)?;
-            }
             menu.append_items(&[
                 &PredefinedMenuItem::separator(),
                 &open,
@@ -262,13 +290,17 @@ mod platform {
                 &PredefinedMenuItem::separator(),
                 &quit,
             ])?;
+            let account_items = match status.can_switch {
+                true => fill_accounts(&menu, 0, status, &account_commands),
+                false => 0,
+            };
             let icon = TrayIconBuilder::new()
                 .with_tooltip(status.tooltip())
                 .with_icon(icon(status.attention)?)
                 .with_icon_as_template(cfg!(target_os = "macos"))
-                .with_menu(Box::new(menu))
-                // A menu bar item opens its menu on click; a Windows tray icon opens the app.
-                .with_menu_on_left_click(cfg!(target_os = "macos"))
+                .with_menu(Box::new(menu.clone()))
+                // A click opens the app (on macOS, its panel under the icon); the menu is a right-click.
+                .with_menu_on_left_click(false)
                 .build()
                 .context("creating the tray icon")?;
 
@@ -295,14 +327,17 @@ mod platform {
                     while let Ok(event) = TrayIconEvent::receiver().try_recv() {
                         if let TrayIconEvent::Click {
                             id,
+                            rect,
                             button: MouseButton::Left,
                             button_state: MouseButtonState::Up,
                             ..
                         } = event
                             && id == tray_id
-                            && cfg!(target_os = "windows")
                         {
-                            asked.push(Command::Open);
+                            asked.push(match cfg!(target_os = "macos") {
+                                true => Command::Panel(anchor_of(rect)),
+                                false => Command::Open,
+                            });
                         }
                     }
                     for command in asked {
@@ -322,11 +357,16 @@ mod platform {
                 settings,
                 update,
                 quit,
-                accounts,
+                menu,
+                account_items: std::cell::Cell::new(account_items),
                 account_commands,
                 last: RefCell::new(status.clone()),
                 _events: events,
             })
+        }
+
+        pub fn anchor(&self) -> Option<crate::panel::Anchor> {
+            self.icon.rect().and_then(anchor_of)
         }
 
         pub fn update(&self, status: &Status) {
@@ -346,13 +386,11 @@ mod platform {
             self.update.set_text(&status.update);
             self.update.set_enabled(status.update_enabled);
             self.quit.set_text(&status.quit);
-            if let Some(accounts) = &self.accounts {
-                accounts.set_text(&status.switch_label);
-                let changed = (&last.accounts, &last.next_label, last.has_next, &last.sign_in_label, last.can_sync)
-                    != (&status.accounts, &status.next_label, status.has_next, &status.sign_in_label, status.can_sync);
-                if changed {
-                    fill_accounts(accounts, status, &self.account_commands);
-                }
+            let changed = (&last.accounts, &last.next_label, last.has_next, &last.sign_in_label, last.can_sync)
+                != (&status.accounts, &status.next_label, status.has_next, &status.sign_in_label, status.can_sync);
+            if status.can_switch && changed {
+                let count = fill_accounts(&self.menu, self.account_items.get(), status, &self.account_commands);
+                self.account_items.set(count);
             }
             let _ = self.icon.set_tooltip(Some(status.tooltip()));
             if last.attention != status.attention
@@ -370,7 +408,7 @@ mod platform {
     use super::{Command, OnCommand, Status, decode};
     use gpui_kit::{App, AsyncApp, Task};
     use ksni::blocking::{Handle, TrayMethods as _};
-    use ksni::menu::{CheckmarkItem, StandardItem, SubMenu};
+    use ksni::menu::{CheckmarkItem, StandardItem};
     use std::sync::mpsc::{self, Sender};
     use std::time::Duration;
 
@@ -385,11 +423,26 @@ mod platform {
             let _ = self.commands.send(command);
         }
 
-        /// "Switch Account": the next account, every account (the one in use checked), then
-        /// signing in to another.
-        fn accounts_menu(&self) -> SubMenu<Self> {
+        /// Every account (the one in use checked), the next account, signing in to another, and a
+        /// separator.
+        fn account_items(&self) -> Vec<ksni::MenuItem<Self>> {
             let s = &self.status;
-            let mut submenu: Vec<ksni::MenuItem<Self>> = vec![
+            let mut items: Vec<ksni::MenuItem<Self>> = s
+                .accounts
+                .iter()
+                .map(|account| -> ksni::MenuItem<Self> {
+                    let id = account.id.clone();
+                    CheckmarkItem {
+                        label: account.label.clone(),
+                        enabled: !account.current && s.can_sync,
+                        checked: account.current,
+                        activate: Box::new(move |this: &mut Self| this.send(Command::SwitchTo(id.clone()))),
+                        ..Default::default()
+                    }
+                    .into()
+                })
+                .collect();
+            items.push(
                 StandardItem {
                     label: s.next_label.clone(),
                     enabled: s.has_next && s.can_sync,
@@ -397,23 +450,8 @@ mod platform {
                     ..Default::default()
                 }
                 .into(),
-                ksni::MenuItem::Separator,
-            ];
-            submenu.extend(s.accounts.iter().map(|account| -> ksni::MenuItem<Self> {
-                let id = account.id.clone();
-                CheckmarkItem {
-                    label: account.label.clone(),
-                    enabled: !account.current && s.can_sync,
-                    checked: account.current,
-                    activate: Box::new(move |this: &mut Self| this.send(Command::SwitchTo(id.clone()))),
-                    ..Default::default()
-                }
-                .into()
-            }));
-            if !s.accounts.is_empty() {
-                submenu.push(ksni::MenuItem::Separator);
-            }
-            submenu.push(
+            );
+            items.push(
                 StandardItem {
                     label: s.sign_in_label.clone(),
                     enabled: s.can_sync,
@@ -422,7 +460,8 @@ mod platform {
                 }
                 .into(),
             );
-            SubMenu { label: s.switch_label.clone(), submenu, ..Default::default() }
+            items.push(ksni::MenuItem::Separator);
+            items
         }
     }
 
@@ -453,7 +492,6 @@ mod platform {
 
         fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
             let s = &self.status;
-            let accounts: Option<ksni::MenuItem<Self>> = s.can_switch.then(|| self.accounts_menu().into());
             let mut items: Vec<ksni::MenuItem<Self>> = vec![
                 StandardItem { label: s.title.clone(), enabled: false, ..Default::default() }.into(),
                 StandardItem { label: s.detail.clone(), enabled: false, ..Default::default() }.into(),
@@ -501,9 +539,9 @@ mod platform {
                 }
                 .into(),
             ];
-            // After the background switch: title, detail, separator, Sync now, background.
-            if let Some(accounts) = accounts {
-                items.insert(5, accounts);
+            // After the headline: title, detail, separator.
+            if s.can_switch {
+                items.splice(3..3, self.account_items());
             }
             items
         }
@@ -532,6 +570,10 @@ mod platform {
                 }
             });
             Ok(Tray { handle, _events: events })
+        }
+
+        pub fn anchor(&self) -> Option<crate::panel::Anchor> {
+            None
         }
 
         pub fn update(&self, status: &Status) {
@@ -564,6 +606,10 @@ mod platform {
         }
 
         pub fn update(&self, _: &Status) {}
+
+        pub fn anchor(&self) -> Option<crate::panel::Anchor> {
+            None
+        }
     }
 }
 
@@ -586,6 +632,7 @@ mod tests {
             alias: None,
             sits_out: false,
             usage: None,
+            weekly_reset: None,
             has_lists: true,
         }
     }
@@ -600,7 +647,7 @@ mod tests {
                 five_hour: Some(30.0),
                 weekly: Some(weekly),
             };
-            crate::model::PlanUse::of(&usage, cc_same_core::fsx::now_secs(), false)
+            crate::model::PlanUse::of(&usage, cc_same_core::fsx::now_secs(), false, None)
         };
         let mut ada = row("a", "ada@example.com", Some(1));
         ada.usage = use_of(40.0, 2.5 * 86_400.0);
@@ -613,18 +660,21 @@ mod tests {
         assert_eq!(
             shown,
             [
-                ("1  ada@example.com  (5h 0% · 7d 40% · 2 days ago)", false),
-                ("2  bob@example.com  (5h 30% · 7d 99%)", true),
+                ("1  ada@example.com · 7d 40%", false),
+                ("2  bob@example.com · 7d 99%", true),
                 ("Account 0c0c0c0c", false),
                 ("dan@example.com", false),
             ]
         );
+        // A long name ends in "…".
+        let long = row("e", "a-very-long-name@somewhere.example", Some(3));
+        assert_eq!(tray_accounts(&[long], None, [])[0].label, "3  a-very-long-name@some…");
         // Signed out: nobody is current.
         assert!(tray_accounts(&rows, None, []).iter().all(|a| !a.current));
     }
 
-    /// The menu is built once, at launch, before the accounts have been read: Switch Account must
-    /// be there from the start, or it never appears.
+    /// The menu is built once, at launch, before the accounts have been read: switching must be
+    /// offered from the start.
     #[test]
     fn switch_account_is_offered_before_the_accounts_load() {
         use cc_same_core::{Config, Ctx, FakeDesktop, LogSink, Paths};

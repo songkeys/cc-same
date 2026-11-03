@@ -11,6 +11,7 @@ pub mod hero;
 pub mod i18n;
 mod login;
 pub mod model;
+mod panel;
 mod settings;
 pub mod store;
 pub mod theme;
@@ -104,6 +105,22 @@ pub fn run() {
     });
 }
 
+/// On macOS, with the menu bar icon showing, the window is a panel under the icon.
+pub(crate) fn uses_panel(cx: &App) -> bool {
+    cfg!(target_os = "macos") && Shell::has_tray(cx)
+}
+
+/// A click on the menu bar icon: open the panel under it, or close it.
+fn toggle_panel(anchor: Option<panel::Anchor>, cx: &mut App) {
+    if let Some(handle) = cx.windows().first().copied() {
+        let _ = handle.update(cx, |_, window, _| window.remove_window());
+        return;
+    }
+    if !panel::just_closed(cx) {
+        open_window(Some(anchor.or_else(|| Shell::anchor(cx))), cx);
+    }
+}
+
 /// Bring the window forward, opening it if it was closed.
 pub fn show_window(cx: &mut App) {
     if let Some(handle) = cx.windows().first().copied() {
@@ -114,15 +131,46 @@ pub fn show_window(cx: &mut App) {
                 let _ = handle.update(cx, |_, window, _| window.activate_window());
             });
         }
-        cx.activate(true);
+        if !uses_panel(cx) {
+            cx.activate(true);
+        }
         return;
     }
+    let panel = uses_panel(cx).then(|| Shell::anchor(cx));
+    open_window(panel, cx);
+}
+
+/// Open the window: as the panel, hanging from where it says (or the top right of the screen),
+/// or as a window of its own.
+fn open_window(panel: Option<Option<panel::Anchor>>, cx: &mut App) {
     let store = Store::global(cx);
-    let options = window_options(cx);
-    // Into the Dock first, so the window comes up like any app's.
-    dock::show(true);
-    match gpui_kit::open_window(options, cx, |window, cx| cx.new(|cx| view::UniApp::new(store.clone(), window, cx))) {
-        Ok(_) => cx.activate(true),
+    let options = match panel {
+        Some(anchor) => panel::options(anchor, cx),
+        None => {
+            // Into the Dock first, so the window comes up like any app's.
+            dock::show(true);
+            window_options(cx)
+        }
+    };
+    let is_panel = panel.is_some();
+    let opened = gpui_kit::open_window(options, cx, |window, cx| {
+        cx.new(|cx| {
+            if is_panel {
+                // Like a menu, the panel goes once something else is clicked.
+                cx.observe_window_activation(window, |_, window, cx| {
+                    if !window.is_window_active() {
+                        panel::closed(cx);
+                        window.remove_window();
+                    }
+                })
+                .detach();
+            }
+            view::UniApp::new(store.clone(), window, cx)
+        })
+    });
+    match opened {
+        Ok(_) if !is_panel => cx.activate(true),
+        Ok(_) => {}
         Err(e) => eprintln!("could not open the {APP_NAME} window: {e:#}"),
     }
 }
@@ -159,6 +207,11 @@ impl Shell {
     /// Whether a tray icon is actually showing, not just turned on.
     fn has_tray(cx: &App) -> bool {
         cx.try_global::<Shell>().is_some_and(|shell| shell.tray.is_some())
+    }
+
+    /// Where the panel hangs from under the tray icon.
+    fn anchor(cx: &App) -> Option<panel::Anchor> {
+        cx.try_global::<Shell>().and_then(|shell| shell.tray.as_ref()?.anchor())
     }
 
     fn follow(store: &Entity<Store>, cx: &mut App) {
@@ -198,6 +251,7 @@ fn on_tray(command: Command, cx: &mut App) {
     let store = Store::global(cx);
     match command {
         Command::Open => show_window(cx),
+        Command::Panel(anchor) => toggle_panel(anchor, cx),
         Command::SyncNow => store.update(cx, |s, cx| s.sync_now(cx)),
         Command::ToggleBackground => {
             let on = store.read(cx).background_on();

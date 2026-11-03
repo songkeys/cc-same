@@ -19,6 +19,7 @@
 use crate::fsx;
 use crate::model::is_uuid;
 use crate::paths::Paths;
+use chrono::{Datelike as _, Duration, TimeZone, Weekday};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -165,6 +166,47 @@ pub fn orgs_since(samples: &[Sample], since: f64) -> BTreeSet<String> {
     samples.iter().filter(|s| s.at > since).filter_map(|s| s.org.clone()).collect()
 }
 
+/// The first renewal after `now` of a weekly window that renews at `anchor` and every week from
+/// there, both in Unix seconds. Both are moments, not clock times, so a change of time zone moves
+/// only how the renewal reads.
+pub fn next_weekly_reset(anchor: i64, now: i64) -> i64 {
+    let week = WEEK as i64;
+    let ahead = (anchor - now).rem_euclid(week);
+    now + if ahead == 0 { week } else { ahead }
+}
+
+/// The renewal on `weekday` at `hour`:`minute` in `tz` (the computer's own time zone, in the
+/// app), as an anchor for [`next_weekly_reset`]. A time the clocks skip reads an hour later.
+pub fn weekly_anchor<Tz: TimeZone>(tz: &Tz, weekday: Weekday, hour: u32, minute: u32, now: i64) -> Option<i64> {
+    let today = tz.timestamp_opt(now, 0).single()?.date_naive();
+    let days = (weekday.num_days_from_monday() + 7 - today.weekday().num_days_from_monday()) % 7;
+    let at = (today + Duration::days(days.into())).and_hms_opt(hour, minute, 0)?;
+    let local = tz
+        .from_local_datetime(&at)
+        .earliest()
+        .or_else(|| tz.from_local_datetime(&(at + Duration::hours(1))).earliest())?;
+    Some(local.timestamp())
+}
+
+/// [`weekly_anchor`] in this computer's time zone, with the weekday from 0 for Monday.
+pub fn weekly_anchor_here(weekday: usize, hour: u32, minute: u32, now: i64) -> Option<i64> {
+    let weekday = Weekday::try_from(u8::try_from(weekday).ok()?).ok()?;
+    weekly_anchor(&chrono::Local, weekday, hour, minute, now)
+}
+
+/// The next renewal of the window that renews at `anchor`, as this computer's time zone reads it
+/// now: the weekday (0 for Monday), the hour and the minute.
+pub fn next_weekly_reset_here(anchor: i64, now: i64) -> Option<(usize, u32, u32)> {
+    use chrono::Timelike as _;
+    let at = chrono::Local.timestamp_opt(next_weekly_reset(anchor, now), 0).single()?;
+    Some((at.weekday().num_days_from_monday() as usize, at.hour(), at.minute()))
+}
+
+/// When a weekly window last renewed, given its anchor: a reading older than that is spent.
+pub fn last_weekly_reset(anchor: i64, now: i64) -> i64 {
+    next_weekly_reset(anchor, now) - WEEK as i64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,5 +282,36 @@ mod tests {
         assert_eq!(latest[ADA], Usage { at: 30.0, five_hour: Some(3.0), weekly: Some(4.0) });
         assert_eq!(latest[BOB].at, 20.0);
         assert_eq!(orgs_since(&samples, 15.0), BTreeSet::from([ADA_ORG.into(), BOB_ORG.into(), TEAM.into()]));
+    }
+
+    #[test]
+    fn a_weekly_reset_rolls_on_a_week_at_a_time() {
+        let week = WEEK as i64;
+        let anchor = 1_000_000;
+        assert_eq!(next_weekly_reset(anchor, anchor - 10), anchor);
+        assert_eq!(next_weekly_reset(anchor, anchor), anchor + week);
+        assert_eq!(next_weekly_reset(anchor, anchor + 3 * week + 5), anchor + 4 * week);
+        // An anchor weeks ahead still names this week's renewal.
+        assert_eq!(next_weekly_reset(anchor + 5 * week, anchor + 1), anchor + week);
+        assert_eq!(last_weekly_reset(anchor, anchor + week + 1), anchor + week);
+    }
+
+    #[test]
+    fn a_weekly_reset_is_given_in_local_time_and_kept_as_a_moment() {
+        use chrono::FixedOffset;
+        // Wednesday 2026-10-28 12:00 UTC.
+        let now = 1_793_188_800;
+        let shanghai = FixedOffset::east_opt(8 * 3600).unwrap();
+        let la = FixedOffset::west_opt(7 * 3600).unwrap();
+        // Friday 06:00 in Los Angeles is Friday 13:00 UTC.
+        let anchor = weekly_anchor(&la, Weekday::Fri, 6, 0, now).unwrap();
+        assert_eq!(anchor, now + 2 * 86_400 + 3600);
+        // Read on a computer moved to Shanghai, the same renewal is Friday 21:00 there.
+        let there = shanghai.timestamp_opt(next_weekly_reset(anchor, now), 0).unwrap();
+        assert_eq!((there.weekday(), there.format("%H:%M").to_string()), (Weekday::Fri, "21:00".into()));
+        // Today's weekday at an hour already past is this week's renewal, gone by: the next is a week on.
+        let gone = weekly_anchor(&chrono::Utc, Weekday::Wed, 6, 0, now).unwrap();
+        assert_eq!(next_weekly_reset(gone, now), gone + WEEK as i64);
+        assert_eq!(weekly_anchor(&chrono::Utc, Weekday::Wed, 24, 0, now), None);
     }
 }

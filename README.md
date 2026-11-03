@@ -36,9 +36,10 @@ comes as a small desktop app and a command-line tool. Both share one engine.
   behind drifts out until it catches up. One sentence says what is going on.
 - **One switch.** *Sync in the background* keeps every account identical from login, even with the
   window closed.
-- **Menu bar / system tray.** The status, *Sync now* and the background switch are a click away.
-  Hide the icon in Settings, and choose whether the app opens quietly at login. On macOS the app
-  is in the Dock only while its window is open, unless you set it to stay.
+- **Menu bar / system tray.** On macOS a click on the icon opens CC Same in a panel under it,
+  and a right-click opens its menu: your accounts, *Sync now* and the background switch. Hide the
+  icon in Settings (the app then opens in a window of its own), and choose whether the app opens
+  quietly at login.
 - **Speaks your language.** English, 简体中文, 繁體中文, 日本語, 한국어, Français, Deutsch, Español,
   Português (Brasil) and Русский, following the system unless you pick one. Light and dark follow
   the system too.
