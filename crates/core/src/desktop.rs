@@ -462,10 +462,33 @@ mod process {
         pids(|p| p.ends_with(MAIN)).map(|found| !found.is_empty())
     }
 
-    /// Claude or any of its helpers, but not its updater.
+    /// Claude or any of its helpers, but not its updater or the browser-owned native host.
     #[cfg(target_os = "macos")]
     pub fn any_running() -> bool {
-        pids(|p| contains(p, BUNDLE) && !p.ends_with(UPDATER)).is_none_or(|found| !found.is_empty())
+        pids(blocks_quit).is_none_or(|found| !found.is_empty())
+    }
+
+    #[cfg(target_os = "macos")]
+    fn blocks_quit(path: &[u8]) -> bool {
+        // Chrome owns this host and can keep it alive after Desktop quits.
+        contains(path, BUNDLE)
+            && !path.ends_with(UPDATER)
+            && !path.ends_with(b"Claude.app/Contents/Helpers/chrome-native-host")
+    }
+
+    #[cfg(all(test, target_os = "macos"))]
+    #[test]
+    fn quit_waits_for_desktop_but_not_the_browser_host() {
+        assert!(blocks_quit(b"/Applications/Claude.app/Contents/MacOS/Claude"));
+        assert!(blocks_quit(
+            b"/Applications/Claude.app/Contents/Frameworks/Claude Helper (Renderer).app/Contents/MacOS/Claude Helper (Renderer)"
+        ));
+        assert!(!blocks_quit(b"/Applications/Claude.app/Contents/Helpers/chrome-native-host"));
+        assert!(!blocks_quit(b"/Users/test/Applications/Claude.app/Contents/Helpers/chrome-native-host"));
+        assert!(blocks_quit(b"/Applications/Claude.app/Contents/Helpers/disclaimer"));
+        assert!(blocks_quit(b"/Applications/Claude.app/Contents/Helpers/chrome-native-host-other"));
+        assert!(!blocks_quit(b"/Applications/Claude.app/Contents/Frameworks/Squirrel.framework/Resources/ShipIt"));
+        assert!(!blocks_quit(b"/usr/local/bin/claude"));
     }
 
     #[cfg(target_os = "macos")]

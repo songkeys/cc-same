@@ -188,6 +188,41 @@ mod platform {
     use tray_icon::menu::{CheckMenuItem, IsMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
     use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
+    type Pointer = tray_icon::dpi::PhysicalPosition<f64>;
+
+    fn clicked(
+        event: TrayIconEvent,
+        tray_id: &tray_icon::TrayIconId,
+    ) -> Option<(MouseButton, tray_icon::Rect, Pointer)> {
+        match event {
+            TrayIconEvent::Click { id, rect, position, button, button_state: MouseButtonState::Up }
+                if id == *tray_id && matches!(button, MouseButton::Left | MouseButton::Right) =>
+            {
+                Some((button, rect, position))
+            }
+            _ => None,
+        }
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn clicks_only_dispatch_on_release_for_our_icon() {
+        let id = tray_icon::TrayIconId::new("cc-same");
+        let event = |id: tray_icon::TrayIconId, button, button_state| TrayIconEvent::Click {
+            id,
+            rect: tray_icon::Rect::default(),
+            position: tray_icon::dpi::PhysicalPosition::new(0., 0.),
+            button,
+            button_state,
+        };
+        for button in [MouseButton::Left, MouseButton::Right] {
+            assert_eq!(clicked(event(id.clone(), button, MouseButtonState::Up), &id).unwrap().0, button);
+            assert!(clicked(event(id.clone(), button, MouseButtonState::Down), &id).is_none());
+        }
+        assert!(clicked(event("another-app".into(), MouseButton::Left, MouseButtonState::Up), &id).is_none());
+        assert!(clicked(event(id.clone(), MouseButton::Middle, MouseButtonState::Up), &id).is_none());
+    }
+
     // macOS draws a template image in the menu bar's own color; Windows wants the colored icon.
     #[cfg(target_os = "macos")]
     const NORMAL: &[u8] = include_bytes!("../resources/tray/template.png");
@@ -208,6 +243,12 @@ mod platform {
         crate::panel::below(at.x, at.y, size.width.into(), size.height.into())
     }
 
+    /// Under the icon that was clicked; failing that (macOS does not always say where its icon
+    /// is), under the pointer that clicked it.
+    fn anchor_of_click(rect: tray_icon::Rect, pointer: Pointer) -> Option<crate::panel::Anchor> {
+        anchor_of(rect).or_else(|| crate::panel::under_pointer(pointer.x, pointer.y))
+    }
+
     pub struct Tray {
         icon: TrayIcon,
         title: MenuItem,
@@ -225,6 +266,8 @@ mod platform {
         /// What each of those items does; they change with the accounts.
         account_commands: Rc<RefCell<Vec<(MenuId, Command)>>>,
         last: RefCell<Status>,
+        /// Where the panel last hung from after a click on the icon, for opening it from the menu.
+        clicked_at: Rc<std::cell::Cell<Option<crate::panel::Anchor>>>,
         _events: Task<()>,
     }
 
@@ -294,15 +337,16 @@ mod platform {
                 true => fill_accounts(&menu, 0, status, &account_commands),
                 false => 0,
             };
-            let icon = TrayIconBuilder::new()
+            let builder = TrayIconBuilder::new()
                 .with_tooltip(status.tooltip())
                 .with_icon(icon(status.attention)?)
                 .with_icon_as_template(cfg!(target_os = "macos"))
-                .with_menu(Box::new(menu.clone()))
-                // A click opens the app (on macOS, its panel under the icon); the menu is a right-click.
-                .with_menu_on_left_click(false)
-                .build()
-                .context("creating the tray icon")?;
+                .with_menu_on_left_click(false);
+            // An NSStatusItem with a menu can let AppKit handle the click before our listener.
+            // On macOS, keep it unattached and show it explicitly only for a right click.
+            #[cfg(target_os = "windows")]
+            let builder = builder.with_menu(Box::new(menu.clone()));
+            let icon = builder.build().context("creating the tray icon")?;
 
             let commands: Vec<(MenuId, Command)> = vec![
                 (sync.id().clone(), Command::SyncNow),
@@ -314,6 +358,10 @@ mod platform {
             ];
             let tray_id = icon.id().clone();
             let dynamic = account_commands.clone();
+            let clicked_at = Rc::new(std::cell::Cell::new(None));
+            let remember = clicked_at.clone();
+            #[cfg(target_os = "macos")]
+            let (context_icon, context_menu) = (icon.clone(), menu.clone());
             let events = cx.spawn(async move |cx: &mut AsyncApp| {
                 loop {
                     let mut asked = Vec::new();
@@ -325,19 +373,32 @@ mod platform {
                         asked.extend(known);
                     }
                     while let Ok(event) = TrayIconEvent::receiver().try_recv() {
-                        if let TrayIconEvent::Click {
-                            id,
-                            rect,
-                            button: MouseButton::Left,
-                            button_state: MouseButtonState::Up,
-                            ..
-                        } = event
-                            && id == tray_id
-                        {
+                        let Some((button, rect, pointer)) = clicked(event, &tray_id) else { continue };
+                        let anchor = anchor_of_click(rect, pointer);
+                        if anchor.is_some() {
+                            remember.set(anchor);
+                        }
+                        if button == MouseButton::Left {
                             asked.push(match cfg!(target_os = "macos") {
-                                true => Command::Panel(anchor_of(rect)),
+                                true => Command::Panel(anchor),
                                 false => Command::Open,
                             });
+                        }
+                        #[cfg(target_os = "macos")]
+                        if button == MouseButton::Right {
+                            use tray_icon::menu::ContextMenu as _;
+                            let mtm = objc2::MainThreadMarker::new().expect("tray events run on the main thread");
+                            if let Some(item) = context_icon.ns_status_item()
+                                && let Some(button) = item.button(mtm)
+                            {
+                                // The retained status button is an NSView and outlives menu tracking.
+                                unsafe {
+                                    context_menu.show_context_menu_for_nsview(
+                                        objc2::rc::Retained::as_ptr(&button).cast(),
+                                        None,
+                                    );
+                                }
+                            }
                         }
                     }
                     for command in asked {
@@ -361,12 +422,13 @@ mod platform {
                 account_items: std::cell::Cell::new(account_items),
                 account_commands,
                 last: RefCell::new(status.clone()),
+                clicked_at,
                 _events: events,
             })
         }
 
         pub fn anchor(&self) -> Option<crate::panel::Anchor> {
-            self.icon.rect().and_then(anchor_of)
+            self.icon.rect().and_then(anchor_of).or_else(|| self.clicked_at.get())
         }
 
         pub fn update(&self, status: &Status) {

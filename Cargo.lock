@@ -97,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "cc-same"
-version = "0.1.12"
+version = "0.1.15"
 dependencies = [
  "anyhow",
  "cc-same-core",
@@ -107,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "cc-same-core"
-version = "0.1.12"
+version = "0.1.15"
 dependencies = [
  "anyhow",
  "chrono",

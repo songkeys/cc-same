@@ -672,10 +672,10 @@ mod mac {
         Release {
             version: semver::Version::new(0, 2, 0),
             notes,
-            page: "https://github.com/songkeys/cc-same/releases/tag/v0.2.0".into(),
+            page: "https://github.com/Arcaneology/cc-same/releases/tag/v0.2.0".into(),
             asset: Some(Asset {
                 name: "CC-Same-0.2.0-macos-arm64.zip".into(),
-                url: "https://github.com/songkeys/cc-same/releases/download/v0.2.0/CC-Same-0.2.0-macos-arm64.zip"
+                url: "https://github.com/Arcaneology/cc-same/releases/download/v0.2.0/CC-Same-0.2.0-macos-arm64.zip"
                     .into(),
                 size: 1000,
                 sha256: None,

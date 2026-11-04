@@ -6,11 +6,11 @@ members = ["crates/core", "crates/cli"]
 exclude = ["crates/app"]
 
 [workspace.package]
-version = "0.1.12"
+version = "0.1.15"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/songkeys/cc-same"
-homepage = "https://github.com/songkeys/cc-same"
+repository = "https://github.com/Arcaneology/cc-same"
+homepage = "https://github.com/Arcaneology/cc-same"
 rust-version = "1.85"
 
 [workspace.dependencies]

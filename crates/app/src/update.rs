@@ -21,9 +21,9 @@ use std::time::{Duration, Instant};
 
 /// This copy's version.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-const LATEST: &str = "https://api.github.com/repos/songkeys/cc-same/releases/latest";
+const LATEST: &str = "https://api.github.com/repos/Arcaneology/cc-same/releases/latest";
 /// Where people can download the latest release themselves.
-pub const DOWNLOADS: &str = "https://github.com/songkeys/cc-same/releases/latest";
+pub const DOWNLOADS: &str = "https://github.com/Arcaneology/cc-same/releases/latest";
 /// What changed in each version, as of this build.
 pub const CHANGELOG: &str = include_str!("../../../CHANGELOG.md");
 /// Given to a freshly installed copy, followed by the process id of the copy it replaces.
@@ -151,7 +151,7 @@ fn client(timeout: Duration) -> anyhow::Result<reqwest::blocking::Client> {
     // ring does the cryptography; installing it a second time changes nothing.
     let _ = rustls::crypto::ring::default_provider().install_default();
     Ok(reqwest::blocking::Client::builder()
-        .user_agent(format!("CC-Same/{VERSION} (+https://github.com/songkeys/cc-same)"))
+        .user_agent(format!("CC-Same/{VERSION} (+https://github.com/Arcaneology/cc-same)"))
         .connect_timeout(Duration::from_secs(20))
         .timeout(timeout)
         .build()?)
@@ -740,7 +740,7 @@ mod tests {
         let name = archive_name(&Version::parse(tag.trim_start_matches('v')).unwrap()).unwrap_or_default();
         serde_json::json!({
             "tag_name": tag,
-            "html_url": format!("https://github.com/songkeys/cc-same/releases/tag/{tag}"),
+            "html_url": format!("https://github.com/Arcaneology/cc-same/releases/tag/{tag}"),
             "body": "## What's new\n\n- Updates\n",
             "assets": [
                 { "name": "cc-same-cli-9.9.9-linux-x64.tar.gz", "size": 1, "browser_download_url": "https://x/cli",

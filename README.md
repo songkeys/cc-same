@@ -5,13 +5,17 @@
 <h1 align="center">CC Same</h1>
 
 <p align="center">
-  <a href="https://github.com/songkeys/cc-same/actions/workflows/ci.yml"><img src="https://github.com/songkeys/cc-same/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/songkeys/cc-same/releases"><img src="https://img.shields.io/github/v/release/songkeys/cc-same?include_prereleases&label=release" alt="Release"></a>
+  <a href="https://github.com/Arcaneology/cc-same/actions/workflows/ci.yml"><img src="https://github.com/Arcaneology/cc-same/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/Arcaneology/cc-same/releases"><img src="https://img.shields.io/github/v/release/Arcaneology/cc-same?include_prereleases&label=release" alt="Release"></a>
 </p>
 
 <p align="center">
   Keep Claude Desktop's local sessions identical across all your accounts.<br>
   Sign out, sign in with another account, and everything is still there.
+</p>
+
+<p align="center">
+  <sub>Maintained fork of <a href="https://github.com/songkeys/cc-same">songkeys/cc-same</a>; releases and updates come from this repository.</sub>
 </p>
 
 <p align="center">
@@ -55,7 +59,7 @@ comes as a small desktop app and a command-line tool. Both share one engine.
 ## Install
 
 **App.** Download `CC-Same-<version>-<platform>` from
-[Releases](https://github.com/songkeys/cc-same/releases): the `.dmg` for `macos-arm64` or `macos-x64`,
+[Releases](https://github.com/Arcaneology/cc-same/releases): the `.dmg` for `macos-arm64` or `macos-x64`,
 or the archive for `windows-x64`, `linux-x64` or `linux-arm64`. Open it and switch on
 **Sync in the background**. That's all: from then on the app updates itself (Settings › Updates).
 
@@ -70,7 +74,7 @@ or the archive for `windows-x64`, `linux-x64` or `linux-arm64`. Open it and swit
 **Command line.**
 
 ```bash
-cargo install --locked --git https://github.com/songkeys/cc-same cc-same
+cargo install --locked --git https://github.com/Arcaneology/cc-same cc-same
 cc-same install
 ```
 

@@ -3,6 +3,36 @@
 What changed in each version of CC Same. The app shows these notes after it updates, and under
 Settings › Updates.
 
+## 0.1.15 - 2026-11-03
+
+### Fixed
+
+- **macOS: the panel opens under the menu bar icon again.** Recent macOS versions do not always
+  say where a menu bar icon is, so the panel fell back to the top right of the screen. It now
+  hangs from where the icon was clicked, just under the menu bar, wherever the icon sits.
+
+### Changed
+
+- **Updates come from this fork.** CC Same now checks for and downloads new versions from
+  [Arcaneology/cc-same](https://github.com/Arcaneology/cc-same/releases), and its links point
+  there too.
+
+## 0.1.14 - 2026-11-03
+
+### Fixed
+
+- **macOS: reserve left clicks for the account panel.** The menu is no longer attached to
+  the native status item; CC Same opens it explicitly on right click so it cannot take over
+  the left click intended for the panel.
+
+## 0.1.13 - 2026-11-03
+
+### Fixed
+
+- **macOS: account switching no longer waits for Chrome's native host.** Chrome can keep
+  Claude's `chrome-native-host` alive after Desktop exits. It no longer prevents CC Same from
+  completing the switch and reopening Claude.
+
 ## 0.1.12 - 2026-10-28
 
 ### Changed

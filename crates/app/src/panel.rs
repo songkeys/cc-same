@@ -23,10 +23,53 @@ pub struct Anchor {
 
 /// The anchor under an icon at `x`, `y`, `width` by `height` physical pixels from the top left
 /// of the main screen, as the tray reports it, read with the scale of the screen it is on.
+///
+/// Recent macOS versions can report a status item's window as an empty frame at the bottom left
+/// of the main screen, which is no place in the menu bar: that gives no anchor.
 #[cfg(target_os = "macos")]
 pub fn below(x: f64, y: f64, width: f64, height: f64) -> Option<Anchor> {
+    if width <= 0. || height <= 0. {
+        return None;
+    }
+    menu_bar_at(x, y, |screen, x, y, scale| {
+        let (left, top) = (screen.left, screen.top);
+        // An icon not placed yet (just after launch) reports somewhere else: only the menu bar,
+        // along the top of a screen, counts.
+        let in_menu_bar = (left..=left + screen.width).contains(&x) && (top..=top + MENU_BAR).contains(&y);
+        in_menu_bar.then(|| Anchor { x: x + width / scale / 2., y: y + height / scale })
+    })
+}
+
+/// The anchor under the pointer at `x`, `y` physical pixels from the top left of the main screen,
+/// for a click in the menu bar: the pointer is on the icon, and the panel hangs from the bottom of
+/// that screen's menu bar.
+#[cfg(target_os = "macos")]
+pub fn under_pointer(x: f64, y: f64) -> Option<Anchor> {
+    menu_bar_at(x, y, |screen, x, y, _| {
+        let inside = (screen.left..=screen.left + screen.width).contains(&x)
+            && (screen.top..=screen.top + MENU_BAR).contains(&y);
+        inside.then_some(Anchor { x, y: screen.top + screen.menu_bar })
+    })
+}
+
+/// A screen, in points from the top left of the main screen.
+#[cfg(target_os = "macos")]
+struct Screen {
+    left: f64,
+    top: f64,
+    width: f64,
+    /// How tall its menu bar is.
+    menu_bar: f64,
+}
+
+/// The first answer `pick` gives for a screen, given `x` and `y` in that screen's points.
+#[cfg(target_os = "macos")]
+fn menu_bar_at(x: f64, y: f64, pick: impl Fn(&Screen, f64, f64, f64) -> Option<Anchor>) -> Option<Anchor> {
     use objc2::MainThreadMarker;
     use objc2_app_kit::NSScreen;
+
+    /// The menu bar's usual height, when the screen does not show one for good (it hides itself).
+    const USUAL_MENU_BAR: f64 = 24.;
 
     let mtm = MainThreadMarker::new()?;
     let screens = NSScreen::screens(mtm);
@@ -34,18 +77,25 @@ pub fn below(x: f64, y: f64, width: f64, height: f64) -> Option<Anchor> {
     let main_height = screens.firstObject()?.frame().size.height;
     screens.iter().find_map(|screen| {
         let scale = screen.backingScaleFactor();
-        let frame = screen.frame();
-        let (left, top) = (frame.origin.x, main_height - frame.origin.y - frame.size.height);
-        let (x, y) = (x / scale, y / scale);
-        // An icon not placed yet (just after launch) reports somewhere else: only the menu bar,
-        // along the top of a screen, counts.
-        let in_menu_bar = (left..=left + frame.size.width).contains(&x) && (top..=top + MENU_BAR).contains(&y);
-        in_menu_bar.then(|| Anchor { x: x + width / scale / 2., y: y + height / scale })
+        let (frame, visible) = (screen.frame(), screen.visibleFrame());
+        let reserved = (frame.origin.y + frame.size.height) - (visible.origin.y + visible.size.height);
+        let found = Screen {
+            left: frame.origin.x,
+            top: main_height - frame.origin.y - frame.size.height,
+            width: frame.size.width,
+            menu_bar: if reserved > 0. && reserved <= MENU_BAR { reserved } else { USUAL_MENU_BAR },
+        };
+        pick(&found, x / scale, y / scale, scale)
     })
 }
 
 #[cfg(not(target_os = "macos"))]
 pub fn below(_x: f64, _y: f64, _width: f64, _height: f64) -> Option<Anchor> {
+    None
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn under_pointer(_x: f64, _y: f64) -> Option<Anchor> {
     None
 }
 
