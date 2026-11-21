@@ -600,6 +600,10 @@ mod tests {
     #[test]
     fn a_failed_switch_puts_everything_back() {
         use std::os::unix::fs::PermissionsExt as _;
+        // The failure below comes from a read-only folder, which root (a CI container) ignores.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
         let mac = Mac::new(ADA);
         switch(&mac.ctx, Target::SignedOut, &desktop::Watch::default()).unwrap();
         mac.sign_in(GRACE);
