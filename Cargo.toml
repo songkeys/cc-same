@@ -24,6 +24,7 @@ reflink-copy = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 tempfile = "3"
+uuid = { version = "1", default-features = false, features = ["v4"] }
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",

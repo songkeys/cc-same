@@ -95,6 +95,12 @@ cc-same switch [<who>] switch Claude to an account, or the next one (--strategy 
 cc-same add            restart Claude signed out, to add an account (the current one is kept)
 cc-same remove <who>   take an account off the list, forgetting the sign-in kept for it
 cc-same alias <who> <name>, disable <who>, enable <who>, move <who> <number>
+cc-same chats list     every chat of every account (--account, --json)
+cc-same chats lost     conversations on disk that no account shows
+cc-same chats rescue   give lost chats a card again (--to <account>; quit Claude first)
+cc-same chats copy     put chats into another account's list (--from, --to; quit Claude first)
+cc-same chats export   a chat as Markdown or a web page (--format md|html)
+cc-same stats          tokens by model, day and folder, from local transcripts
 cc-same config         --exclude <account-id>, --auto-join off, …
 ```
 
