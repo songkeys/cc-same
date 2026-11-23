@@ -1,5 +1,7 @@
 //! `cc-same`: keep Claude Desktop's local sessions identical across all your accounts.
 
+mod chats_cmd;
+
 use anyhow::{bail, Result};
 use cc_same_core::accounts::{self, NotFound, Roster, Slot, Strategy};
 use cc_same_core::desktop::{self, Quitting};
@@ -37,6 +39,62 @@ struct Cli {
 }
 
 #[derive(Clone, Copy, ValueEnum)]
+pub enum ExportFormat {
+    /// Markdown
+    Md,
+    /// A self-contained web page
+    Html,
+}
+
+#[derive(Subcommand)]
+enum ChatsCmd {
+    /// Every chat in every account's list
+    List {
+        /// Only this account's (its number, alias, email or id)
+        #[arg(long)]
+        account: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Chats whose history is on disk but that no account shows
+    Lost {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Give lost chats a card again, so Claude shows them (quit Claude first)
+    Rescue {
+        /// Transcript ids (or their first characters); all lost chats without any
+        ids: Vec<String>,
+        /// The account whose list gets them
+        #[arg(long)]
+        to: String,
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// Put chats of one account into another's list; newer cards win (quit Claude first)
+    Copy {
+        /// Chat ids (or their first characters); every chat without any
+        ids: Vec<String>,
+        #[arg(long)]
+        from: String,
+        #[arg(long)]
+        to: String,
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// Write a chat as Markdown or a web page
+    Export {
+        /// The start of a chat's id (card or transcript)
+        chat: String,
+        #[arg(long, value_enum, default_value_t = ExportFormat::Md)]
+        format: ExportFormat,
+        /// Write to this file instead of the terminal
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
 enum OnOff {
     On,
     Off,
@@ -46,6 +104,16 @@ enum OnOff {
 enum Cmd {
     /// Read-only check of every account's session index
     Doctor,
+    /// Chats across accounts: list, find lost ones, rescue, copy, export
+    Chats {
+        #[command(subcommand)]
+        cmd: ChatsCmd,
+    },
+    /// Tokens used by model, day and folder, counted from Claude Code's local transcripts
+    Stats {
+        #[arg(long)]
+        json: bool,
+    },
     /// Show what a sync would change (dry run)
     Plan,
     /// Sync once
@@ -192,6 +260,14 @@ fn run(cli: Cli) -> Result<()> {
         return doctor(&ctx);
     };
     match cmd {
+        Cmd::Chats { cmd } => match cmd {
+            ChatsCmd::List { account, json } => chats_cmd::list(&ctx, account.as_deref(), json),
+            ChatsCmd::Lost { json } => chats_cmd::lost(&ctx, json),
+            ChatsCmd::Rescue { ids, to, yes } => chats_cmd::rescue(&ctx, &ids, &to, yes),
+            ChatsCmd::Copy { ids, from, to, yes } => chats_cmd::copy(&ctx, &ids, &from, &to, yes),
+            ChatsCmd::Export { chat, format, out } => chats_cmd::export(&ctx, &chat, format, out),
+        },
+        Cmd::Stats { json } => chats_cmd::stats(&ctx, json),
         Cmd::Doctor => doctor(&ctx),
         Cmd::Plan => show_plan(&ctx, cli.verbose),
         Cmd::Sync { yes } => sync(&ctx, yes),
