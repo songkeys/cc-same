@@ -71,7 +71,9 @@ impl Logger {
     }
 }
 
-pub(crate) type RecordKey = (PathBuf, i128, u64);
+/// The parsed records of each index folder, by session id: one per file on disk, so the agent
+/// and the app, which run for weeks, hold no more than the folders do.
+pub(crate) type RecordCache = HashMap<PathBuf, HashMap<String, Record>>;
 /// When the transcript index was built, and the ids it found (None: no projects folder).
 pub(crate) type TranscriptCache = Option<(Instant, Option<Arc<HashSet<String>>>)>;
 
@@ -87,7 +89,7 @@ pub(crate) struct LogScan {
 
 #[derive(Default)]
 pub(crate) struct Caches {
-    pub records: Mutex<HashMap<RecordKey, Record>>,
+    pub records: Mutex<RecordCache>,
     pub recent_accounts: Mutex<HashMap<String, Instant>>,
     pub transcripts: Mutex<TranscriptCache>,
     pub log_scan: Mutex<HashMap<PathBuf, LogScan>>,

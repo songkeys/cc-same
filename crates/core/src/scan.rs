@@ -65,16 +65,21 @@ pub fn leftover_dirs(ctx: &Ctx, surface: Surface) -> Vec<String> {
     out
 }
 
-fn load_record(ctx: &Ctx, path: &Path, uuid: &str, md: &fs::Metadata) -> Record {
-    let key = (path.to_path_buf(), fsx::mtime_ns(md), md.len());
-    if let Some(hit) = ctx.caches.records.lock().unwrap().get(&key) {
-        return hit.clone();
+/// The record in `path`, a file of the index folder `dir`. It is parsed once and kept until the
+/// file changes or goes away ([`forget_missing`]): Desktop rewrites the record of a session in
+/// use every few seconds, and each rewrite must take the place of the one before.
+fn load_record(ctx: &Ctx, dir: &Path, path: &Path, uuid: &str, md: &fs::Metadata) -> Record {
+    let (mtime_ns, size) = (fsx::mtime_ns(md), md.len());
+    if let Some(hit) = ctx.caches.records.lock().unwrap().get(dir).and_then(|recs| recs.get(uuid)) {
+        if hit.mtime_ns == mtime_ns && hit.size == size {
+            return hit.clone();
+        }
     }
     let mut rec = Record {
         uuid: uuid.to_string(),
         path: path.to_path_buf(),
-        mtime_ns: fsx::mtime_ns(md),
-        size: md.len(),
+        mtime_ns,
+        size,
         nlink: fsx::nlink(md),
         data: None,
         error: None,
@@ -91,11 +96,28 @@ fn load_record(ctx: &Ctx, path: &Path, uuid: &str, md: &fs::Metadata) -> Record 
         Err(e) => rec.error = Some(e.to_string()),
     }
     let mut cache = ctx.caches.records.lock().unwrap();
-    if cache.len() > 20_000 {
-        cache.clear();
+    // A session's copies in the other accounts hold the same portable fields once they are in
+    // sync, and so does a file rewritten with nothing portable changed: keep one for all.
+    if let Some(data) = &mut rec.data {
+        let same = cache.values().filter_map(|recs| recs.get(uuid)?.data.as_ref()).find(|d| ***d == **data);
+        if let Some(same) = same {
+            *data = same.clone();
+        }
     }
-    cache.insert(key, rec.clone());
+    cache.entry(dir.to_path_buf()).or_default().insert(uuid.to_string(), rec.clone());
     rec
+}
+
+/// Forget the parsed records of files that are no longer in the folder `ps` was read from, and
+/// those of folders that are gone.
+fn forget_missing(ctx: &Ctx, ps: &PartState) {
+    ctx.caches.records.lock().unwrap().retain(|dir, recs| {
+        if *dir != ps.part.path {
+            return dir.is_dir();
+        }
+        recs.retain(|uuid, _| ps.records.contains_key(uuid));
+        !recs.is_empty()
+    });
 }
 
 fn load_tomb(path: &Path, id: &str, md: &fs::Metadata) -> Tomb {
@@ -146,6 +168,12 @@ fn load_collection(path: &Path, rel: &'static str) -> Option<Collection> {
 const KNOWN_NAMES: &[&str] = &[".DS_Store", ARCHIVE_IDX, "scheduled-tasks.json", "backlog", "desktop.ini"];
 
 pub fn scan_partition(ctx: &Ctx, p: &Partition) -> PartState {
+    let ps = read_partition(ctx, p);
+    forget_missing(ctx, &ps);
+    ps
+}
+
+fn read_partition(ctx: &Ctx, p: &Partition) -> PartState {
     let mut ps = PartState::new(p.clone());
     if p.is_link {
         ps.error = Some("symlinked folder: Claude cannot save sessions through it (run fix-symlinks)".into());
@@ -175,7 +203,7 @@ pub fn scan_partition(ctx: &Ctx, p: &Partition) -> PartState {
         }
         if let Some(uuid) = name.strip_prefix("local_").and_then(|n| n.strip_suffix(".json")).filter(|u| is_uuid(u)) {
             if md.is_file() {
-                ps.records.insert(uuid.to_string(), load_record(ctx, &e.path(), uuid, &md));
+                ps.records.insert(uuid.to_string(), load_record(ctx, &p.path, &e.path(), uuid, &md));
             } else {
                 ps.unmanaged.push(format!("{name} (not a regular file)"));
             }
@@ -284,4 +312,117 @@ pub fn account_labels(ctx: &Ctx) -> BTreeMap<String, String> {
         }
     }
     labels
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Config, FakeDesktop, LogSink, Paths};
+    use std::time::UNIX_EPOCH;
+
+    const ADA: (&str, &str) = ("aaaaaaaa-0000-4000-8000-000000000001", "0a0a0a0a-0000-4000-8000-000000000001");
+    const BOB: (&str, &str) = ("bbbbbbbb-0000-4000-8000-000000000002", "0b0b0b0b-0000-4000-8000-000000000002");
+    const CHAT: &str = "11111111-0000-4000-8000-000000000001";
+    const NOTES: &str = "22222222-0000-4000-8000-000000000002";
+
+    /// Claude Desktop's index folders, and what a long-running agent keeps of them.
+    struct Desk {
+        _tmp: tempfile::TempDir,
+        ctx: Ctx,
+    }
+
+    impl Desk {
+        fn new() -> Desk {
+            let tmp = tempfile::tempdir().unwrap();
+            let mut paths = Paths::new(tmp.path().join("Claude"), tmp.path().join("state"));
+            paths.projects = vec![tmp.path().join("projects")];
+            paths.desktop_logs = tmp.path().join("logs");
+            let fake = FakeDesktop { running: Some(false), active: None };
+            Desk { _tmp: tmp, ctx: Ctx::new(paths, Config::default(), fake, LogSink::Silent) }
+        }
+
+        fn folder(&self, who: (&str, &str)) -> PathBuf {
+            self.ctx.paths.surface_root(Surface::Code).join(who.0).join(who.1)
+        }
+
+        /// Desktop saves `session` for an account at second `at`: the title travels, the Remote
+        /// Control mirror is the account's own.
+        fn save(&self, who: (&str, &str), session: &str, title: &str, at: u64) {
+            let record = serde_json::json!({
+                "sessionId": format!("local_{session}"), "title": title, "bridgeSessionId": who.0,
+            });
+            fs::create_dir_all(self.folder(who)).unwrap();
+            let path = self.folder(who).join(format!("local_{session}.json"));
+            fs::write(&path, record.to_string()).unwrap();
+            let file = fs::OpenOptions::new().write(true).open(path).unwrap();
+            file.set_modified(UNIX_EPOCH + Duration::from_secs(1_800_000_000 + at)).unwrap();
+        }
+
+        /// One pass over every folder, as the agent and the app make them: each session's
+        /// parsed record, per account.
+        fn scan(&self) -> Vec<BTreeMap<String, Arc<Json>>> {
+            discover(&self.ctx, Surface::Code)
+                .iter()
+                .map(|p| scan_partition(&self.ctx, p).records.into_iter().map(|(u, r)| (u, r.data.unwrap())).collect())
+                .collect()
+        }
+
+        /// The folders records are kept of, and how many records in all.
+        fn kept(&self) -> (Vec<PathBuf>, usize) {
+            let cache = self.ctx.caches.records.lock().unwrap();
+            let mut folders: Vec<PathBuf> = cache.keys().cloned().collect();
+            folders.sort();
+            (folders, cache.values().map(|recs| recs.len()).sum())
+        }
+    }
+
+    #[test]
+    fn a_session_saved_again_and_again_is_kept_once() {
+        let desk = Desk::new();
+        desk.save(ADA, NOTES, "notes", 0);
+        // A session in use: Desktop rewrites its record after every turn, for weeks.
+        for turn in 0..200 {
+            desk.save(ADA, CHAT, &format!("turn {turn}"), turn);
+            let seen = desk.scan();
+            assert_eq!(seen[0][CHAT]["title"], format!("turn {turn}"));
+            assert_eq!(desk.kept(), (vec![desk.folder(ADA)], 2));
+        }
+    }
+
+    #[test]
+    fn what_is_gone_from_disk_is_forgotten() {
+        let desk = Desk::new();
+        desk.save(ADA, CHAT, "chat", 0);
+        desk.save(ADA, NOTES, "notes", 0);
+        desk.save(BOB, CHAT, "chat", 0);
+        desk.scan();
+        assert_eq!(desk.kept(), (vec![desk.folder(ADA), desk.folder(BOB)], 3));
+        // A session is deleted.
+        fs::remove_file(desk.folder(ADA).join(format!("local_{NOTES}.json"))).unwrap();
+        desk.scan();
+        assert_eq!(desk.kept(), (vec![desk.folder(ADA), desk.folder(BOB)], 2));
+        // An account's folder is removed: nothing scans it again, the next pass still drops it.
+        fs::remove_dir_all(desk.folder(ADA)).unwrap();
+        desk.scan();
+        assert_eq!(desk.kept(), (vec![desk.folder(BOB)], 1));
+    }
+
+    #[test]
+    fn copies_in_sync_share_one_parsed_record() {
+        let desk = Desk::new();
+        desk.save(ADA, CHAT, "chat", 0);
+        desk.save(BOB, CHAT, "chat", 0);
+        let seen = desk.scan();
+        assert!(Arc::ptr_eq(&seen[0][CHAT], &seen[1][CHAT]), "the files differ only in what is the account's own");
+        // One account moves on: the other still has what it had.
+        desk.save(ADA, CHAT, "chat, continued", 1);
+        let seen = desk.scan();
+        assert_eq!(seen[0][CHAT]["title"], "chat, continued");
+        assert_eq!(seen[1][CHAT]["title"], "chat");
+        // The newer copy arrives there, and they are one again.
+        desk.save(BOB, CHAT, "chat, continued", 1);
+        let seen = desk.scan();
+        assert!(Arc::ptr_eq(&seen[0][CHAT], &seen[1][CHAT]));
+        assert_eq!(seen[1][CHAT]["title"], "chat, continued");
+    }
 }

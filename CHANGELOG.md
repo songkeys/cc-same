@@ -3,6 +3,15 @@
 What changed in each version of CC Same. The app shows these notes after it updates, and under
 Settings › Updates.
 
+## Unreleased
+
+### Fixed
+
+- **Memory use kept growing.** The app and the background agent kept every version of a
+  session's record they had read, and Claude saves a session in use every few seconds: after a
+  couple of weeks each of them held more than 1 GB. They now keep one version of each session,
+  and one copy for the accounts whose copies are the same.
+
 ## 0.1.13 - 2026-11-03
 
 ### Changed
